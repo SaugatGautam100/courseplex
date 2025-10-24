@@ -1,4 +1,12 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* You can add any other global styles below these lines */
+
+body {
+  /* example style */
+}
 
 :root {
   --background: #ffffff;

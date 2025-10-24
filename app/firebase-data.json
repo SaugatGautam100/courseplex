@@ -1,0 +1,143 @@
+{
+  "courses": {
+    "-N_course_1": {
+      "name": "Expert Package",
+      "price": 3699,
+      "currency": "Rs",
+      "features": [
+        "Affiliate Marketing",
+        "Communication Skill",
+        "Daraz affiliate",
+        "SEO & Freelancing",
+        "Thumbnail design, Editing"
+      ],
+      "cta": "Get Started Now",
+      "highlight": true,
+      "badge": "Most Popular",
+      "gradient": "from-fuchsia-500 to-sky-500"
+    },
+    "-N_course_2": {
+      "name": "Achieve Package",
+      "price": 5199,
+      "currency": "Rs",
+      "features": [
+        "All features from Expert Plan",
+        "Email Marketing",
+        "Web Design Basics"
+      ],
+      "cta": "Get Started Now",
+      "highlight": false,
+      "badge": "",
+      "gradient": "from-violet-500 to-indigo-500"
+    },
+    "-N_course_3": {
+      "name": "Apply Package",
+      "price": 2699,
+      "currency": "Rs",
+      "features": [
+        "Affiliate Marketing",
+        "Communication Skill",
+        "SEO Basics"
+      ],
+      "cta": "Get Started Now",
+      "highlight": false,
+      "badge": "",
+      "gradient": "from-emerald-500 to-teal-500"
+    }
+  },
+  "kycRequests": {
+    "-N_kyc_1": {
+      "userName": "Anjali Sharma",
+      "documentType": "Citizenship",
+      "documentUrl": "https://via.placeholder.com/800x500.png?text=Citizenship+Front",
+      "submittedAt": "2023-11-10T10:00:00Z",
+      "status": "Pending"
+    },
+    "-N_kyc_2": {
+      "userName": "Bikram Thapa",
+      "documentType": "Passport",
+      "documentUrl": "https://via.placeholder.com/800x500.png?text=Passport+Page",
+      "submittedAt": "2023-11-08T14:30:00Z",
+      "status": "Approved"
+    },
+    "-N_kyc_3": {
+      "userName": "Sita Rai",
+      "documentType": "Driver's License",
+      "documentUrl": "https://via.placeholder.com/800x500.png?text=License+Front",
+      "submittedAt": "2023-11-05T09:15:00Z",
+      "status": "Rejected"
+    }
+  },
+  "orders": {
+    "-N_order_1": {
+      "customerName": "Priya Gurung",
+      "email": "priya.g@example.com",
+      "product": "Expert Package",
+      "status": "Completed"
+    },
+    "-N_order_2": {
+      "customerName": "Sanjay Rai",
+      "email": "sanjay@example.com",
+      "product": "Apply Package",
+      "status": "Pending"
+    },
+    "-N_order_3": {
+      "customerName": "Ramesh Karki",
+      "email": "ramesh.k@example.com",
+      "product": "Achieve Package",
+      "status": "Cancelled"
+    }
+  },
+  "ranks": {
+    "bronze": {
+      "name": "Bronze",
+      "requirement": "Complete 1 Course",
+      "icon": "military_tech",
+      "color": "text-orange-500"
+    },
+    "silver": {
+      "name": "Silver",
+      "requirement": "Complete 3 Courses",
+      "icon": "military_tech",
+      "color": "text-slate-400"
+    },
+    "gold": {
+      "name": "Gold",
+      "requirement": "Complete 5 Courses & Top 20%",
+      "icon": "military_tech",
+      "color": "text-amber-400"
+    },
+    "platinum": {
+      "name": "Platinum",
+      "requirement": "Top 5% Student",
+      "icon": "workspace_premium",
+      "color": "text-cyan-400"
+    }
+  },
+  "withdrawalRequests": {
+    "-N_wd_1": {
+      "userName": "Sunita Tamang",
+      "amount": 5000,
+      "paymentMethod": "eSewa",
+      "details": "eSewa ID: 98********",
+      "requestedAt": "2023-11-10T11:00:00Z",
+      "status": "Pending"
+    },
+    "-N_wd_2": {
+      "userName": "Hari Bahadur",
+      "amount": 15000,
+      "paymentMethod": "Bank Transfer",
+      "details": "Nabil Bank, Acc: 123456789",
+      "requestedAt": "2023-11-09T09:00:00Z",
+      "status": "Completed"
+    },
+    "-N_wd_3": {
+      "userName": "Gita Adhikari",
+      "amount": 2500,
+      "paymentMethod": "Khalti",
+      "details": "Khalti ID: 97********",
+      "requestedAt": "2023-11-07T16:45:00Z",
+      "status": "Rejected"
+    }
+  }
+}
