@@ -1,7 +1,7 @@
 import type { SVGProps } from "react";
 
 export const metadata = {
-  title: "About Us — Skill Hub Nepal",
+  title: "About Us — Course Plex",
   description:
     "Learn about our mission to empower students with practical digital marketing skills for a successful career. Meet the team dedicated to your future.",
 };
@@ -25,7 +25,7 @@ export default function AboutPage() {
           <div className="order-2 md:order-1">
             <h2 className="text-2xl font-extrabold md:text-3xl">Our Story</h2>
             <p className="mt-3 max-w-prose text-base leading-7 text-slate-700">
-              Skill Hub Nepal was founded with a simple yet powerful belief: every student deserves access to high-quality, practical education that leads to a real career. We saw a growing demand for digital marketing professionals but a lack of accessible training that taught the necessary real-world skills. Our mission is to fill that void.
+              Course Plex was founded with a simple yet powerful belief: every student deserves access to high-quality, practical education that leads to a real career. We saw a growing demand for digital marketing professionals but a lack of accessible training that taught the necessary real-world skills. Our mission is to fill that void.
             </p>
           </div>
           <div className="order-1 rounded-2xl bg-sky-50 p-8 ring-1 ring-sky-100 md:order-2">

@@ -148,7 +148,7 @@ function Hero({
           Master In-Demand Digital Skills for a Brighter Future
         </h1>
         <p className="mt-4 max-w-2xl text-base text-slate-600 md:text-lg">
-          At Skill Hub Nepal, we provide practical, career-focused training in digital marketing. Our courses are designed to
+          At Course Plex, we provide practical, career-focused training in digital marketing. Our courses are designed to
           give you the real-world skills needed to thrive in today&apos;s competitive job market.
         </p>
         <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row">

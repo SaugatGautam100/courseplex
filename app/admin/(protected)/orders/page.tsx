@@ -151,7 +151,6 @@ export default function AdminOrdersPage() {
           paymentProofUrl: order.paymentProofUrl,
         };
 
-        // LIVE display from /users for name/email/image (source of truth)
         const customerUser = usersData[base.userId];
         const displayName = customerUser?.name ? String(customerUser.name) : base.customerName;
         const displayEmail = customerUser?.email ? String(customerUser.email) : base.email;
@@ -165,7 +164,6 @@ export default function AdminOrdersPage() {
 
         const customerImageUrl = base.userId && usersData[base.userId]?.imageUrl ? String(usersData[base.userId].imageUrl) : undefined;
 
-        // Display-only special badge
         const sa = refU?.specialAccess;
         const referrerSpecialPct =
           sa && sa.active !== false && typeof sa.commissionPercent === "number"
@@ -258,16 +256,15 @@ export default function AdminOrdersPage() {
         // Commission percent strictly from the course
         let coursePct = allPackages[order.courseId]?.commissionPercent;
         if (typeof coursePct !== "number") {
-          // try from DB
           const pkgSnap = await get(dbRef(database, `packages/${order.courseId}`));
           coursePct = pkgSnap.exists() ? toNumber(pkgSnap.val()?.commissionPercent) : 58;
         }
         if (!coursePct || coursePct <= 0) coursePct = 58;
 
-        // Referrer commission = coursePct% of purchased package price (no caps/mins)
+        // Referrer commission
         commissionAmount = Math.floor(purchasedPackagePrice * (coursePct / 100));
 
-        // Credit commission to referrer
+        // Credit commission to referrer (and counters)
         const refSnap = await get(dbRef(database, `users/${order.referrerId}`));
         if (refSnap.exists()) {
           const d = refSnap.val() || {};
@@ -299,7 +296,30 @@ export default function AdminOrdersPage() {
         const custSnap = await get(dbRef(database, `users/${order.userId}`));
         if (custSnap.exists()) {
           const cust = custSnap.val() || {};
+          // Balance
           updates[`/users/${order.userId}/balance`] = toNumber(cust.balance) + cashbackAmount;
+
+          // Also update customer's earnings counters and lifetime
+          const cToday = startOfTodayTs();
+          const cWeek = startOfWeekTs();
+          const cMonth = startOfMonthTs();
+
+          const cLastDailyReset = toNumber(cust.lastDailyReset);
+          const cLastWeeklyReset = toNumber(cust.lastWeeklyReset);
+          const cLastMonthlyReset = toNumber(cust.lastMonthlyReset);
+
+          const cDailyBase = cLastDailyReset >= cToday ? toNumber(cust.dailyEarnings) : 0;
+          const cWeeklyBase = cLastWeeklyReset >= cWeek ? toNumber(cust.weeklyEarnings) : 0;
+          const cMonthlyBase = cLastMonthlyReset >= cMonth ? toNumber(cust.monthlyEarnings) : 0;
+
+          updates[`/users/${order.userId}/dailyEarnings`] = cDailyBase + cashbackAmount;
+          updates[`/users/${order.userId}/weeklyEarnings`] = cWeeklyBase + cashbackAmount;
+          updates[`/users/${order.userId}/monthlyEarnings`] = cMonthlyBase + cashbackAmount;
+          updates[`/users/${order.userId}/lastDailyReset`] = cToday;
+          updates[`/users/${order.userId}/lastWeeklyReset`] = cWeek;
+          updates[`/users/${order.userId}/lastMonthlyReset`] = cMonth;
+
+          updates[`/users/${order.userId}/totalEarnings`] = toNumber(cust.totalEarnings) + cashbackAmount;
         }
         updates[`/orders/${order.id}/cashbackAmount`] = cashbackAmount;
       }
@@ -329,12 +349,12 @@ export default function AdminOrdersPage() {
       }
 
       // Email
-      const subject = isUpgrade ? "Your Package Upgrade is Complete!" : "Your Skill Hub Account is Activated!";
+      const subject = isUpgrade ? "Your Package Upgrade is Complete!" : "Your Course Plex Account is Activated!";
       const htmlContent = `<h1>Congratulations, ${order.customerName}!</h1><p>${
         isUpgrade
           ? `Your upgrade to <strong>${order.product.replace("Upgrade to: ", "")}</strong> has been approved.`
           : "Your account has been approved and is now active. Please log in again to access your dashboard."
-      }</p>${order.referrerId ? `<p>A 10% cashback has been credited to your account balance.</p>` : ""}<p><a href="https://skillhubnepal.com.np/login">Log in to Dashboard</a></p>`;
+      }</p>${order.referrerId ? `<p>A 10% cashback has been credited to your account balance.</p>` : ""}<p><a href="https://courseplex.com.np/login">Log in to Dashboard</a></p>`;
 
       await fetch("/api/send-email", {
         method: "POST",
@@ -437,7 +457,6 @@ export default function AdminOrdersPage() {
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) throw new Error("Admin not authenticated.");
 
-      // Server-side delete (Auth + deep DB cleanup; referrals untouched)
       const response = await fetch("/api/admin/delete-user", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },

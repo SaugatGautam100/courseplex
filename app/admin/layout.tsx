@@ -16,7 +16,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         <div className="flex-1 flex flex-col">
           <header className="md:hidden sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 backdrop-blur-sm px-4">
             <div className="flex items-center gap-2">
-              <Image src="/images/skillhubnepallogo.png" alt="Logo" width={28} height={28} />
+              <Image src="/images/courseplexlogo.png" alt="Logo" width={28} height={28} />
               <h1 className="text-lg font-bold text-slate-800">Admin Panel</h1>
             </div>
             <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 rounded-md hover:bg-slate-100" aria-label="Toggle menu">

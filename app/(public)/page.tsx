@@ -11,11 +11,20 @@ import type { SVGProps } from "react";
 
 const BRAND = "Course Plex";
 
-/**
-  Terminology (UI → DB):
-  - Courses (UI) = bundles in DB (packages)
-  - Sub-courses (UI) = individual modules in DB (courses)
+// E-learning hero image (Unsplash)
+const HERO_MAIN_URL =
+  "https://images.unsplash.com/photo-1496171367470-9ed9a91ea931?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=870";
+
+/*
+If you prefer Firebase Storage or GCS, just replace the URLs above, e.g.:
+
+const HERO_MAIN_URL =
+  "https://firebasestorage.googleapis.com/v0/b/<your-bucket>/o/elearning%2Fhero.jpg?alt=media";
 */
+
+// Payout config
+const AFFILIATE_PCT = 70;
+const CASHBACK_PCT = 10;
 
 /* ================== Types ================== */
 type PackagesMapRaw = Record<
@@ -64,7 +73,7 @@ type HeroSection = {
 };
 
 type SiteMetrics = {
-  coursePackages?: number; // keep keys for compatibility
+  coursePackages?: number;
   skillCourses?: number;
   practicalLearning?: number;
 };
@@ -81,7 +90,7 @@ export default function Page() {
   const [hero, setHero] = useState<HeroSection>({
     phone: "9779705726179",
     whatsappMessage:
-      "Hi! I’m interested in your courses. Can you help me choose the best one?",
+      "Hi! I'm interested in your courses. Can you help me choose best one?",
   });
   const [siteMetrics, setSiteMetrics] = useState<SiteMetrics>({
     coursePackages: 4,
@@ -217,6 +226,35 @@ export default function Page() {
         />
       </section>
 
+      {/* Payouts Banner */}
+      <section className="bg-gradient-to-r from-emerald-50 via-white to-sky-50 py-6">
+        <div className="mx-auto max-w-5xl px-4">
+          <div className="flex flex-col items-center justify-between gap-3 rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm sm:flex-row">
+            <div className="text-center sm:text-left">
+              <h3 className="text-base font-bold text-slate-900">New Payouts & Cashback</h3>
+              <p className="text-sm text-slate-600">
+                Affiliates earn <span className="font-semibold text-emerald-700">{AFFILIATE_PCT}%</span> of package price. Buyers get a{" "}
+                <span className="font-semibold text-sky-700">{CASHBACK_PCT}%</span> cashback.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Link
+                href="/signup"
+                className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700"
+              >
+                Become an Affiliate
+              </Link>
+              <Link
+                href="/courses"
+                className="inline-flex items-center justify-center rounded-full bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700"
+              >
+                Browse Courses
+              </Link>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* FEATURED COURSES ONLY */}
       <section className="relative z-10 bg-white py-12 sm:py-16">
         <div className="mx-auto max-w-7xl px-4">
@@ -260,7 +298,7 @@ export default function Page() {
         phone={normalizedWaPhone}
         message={
           hero.whatsappMessage ||
-          "Hi! I’m interested in your courses. Can you help me choose the best one?"
+          "Hi! I'm interested in your courses. Can you help me choose best one?"
         }
       />
     </main>
@@ -329,7 +367,7 @@ function Hero({
             </dl>
           </div>
 
-          {/* Right: Media (working images via next.config.js) */}
+          {/* Right: Media (Images fixed via local files) */}
           <div className="relative h-full">
             <HeroMedia />
           </div>
@@ -340,36 +378,43 @@ function Hero({
 }
 
 function HeroMedia() {
+  const [mainSrc, setMainSrc] = useState<string>(HERO_MAIN_URL);
+
   return (
     <div className="relative mx-auto w-full max-w-xl">
       {/* Main image */}
-      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl shadow-xl ring-1 ring-slate-200">
+      <div className="relative w-full overflow-hidden rounded-2xl shadow-xl ring-1 ring-slate-200 h-[240px] sm:h-[320px] md:h-[380px] lg:h-[420px]">
         <Image
-          src="https://images.unsplash.com/photo-1584697964199-2942b27f67d3?q=80&w=1920&auto=format&fit=crop"
-          alt="Learning online with a laptop"
+          src={mainSrc}
+          alt="Digital e-learning on a laptop"
           fill
+          sizes="(max-width: 768px) 100vw, 50vw"
           className="object-cover"
           priority
+          unoptimized
+          onError={() => setMainSrc("/images/course-fallback.jpg")}
         />
         <div className="pointer-events-none absolute left-4 top-4 inline-flex items-center gap-2 rounded-full bg-white/85 px-3 py-1 text-xs font-semibold text-slate-700 backdrop-blur">
           <PlayIcon className="h-4 w-4 text-fuchsia-600" /> Learn anywhere
         </div>
       </div>
 
-      {/* Floating cards */}
+      {/* Floating cards (keep your existing ones) */}
       <div className="pointer-events-none absolute -left-6 -bottom-6 h-28 w-40 overflow-hidden rounded-xl bg-white shadow-md ring-1 ring-slate-200 sm:-left-10 sm:-bottom-8 sm:h-32 sm:w-48">
         <Image
-          src="https://images.unsplash.com/photo-1513258496099-48168024aec0?q=80&w=1200&auto=format&fit=crop"
-          alt="Collaborative study"
+          src="https://images.unsplash.com/photo-1501504905252-473c47e087f8?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=774"
+          alt="Collaborative online study"
           fill
+          sizes="160px"
           className="object-cover"
         />
       </div>
       <div className="pointer-events-none absolute -right-6 -top-6 h-28 w-40 overflow-hidden rounded-xl bg-white shadow-md ring-1 ring-slate-200 sm:-right-10 sm:-top-10 sm:h-32 sm:w-48">
         <Image
-          src="https://images.unsplash.com/photo-1606761568499-6d2451b23c56?q=80&w=1200&auto=format&fit=crop"
-          alt="Tech analytics"
+          src="https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=600&q=80"
+          alt="Learning tech skills online"
           fill
+          sizes="160px"
           className="object-cover"
         />
       </div>
@@ -408,7 +453,7 @@ function FeaturedCoursesGrid({
   if (!courses.length) {
     return (
       <div className="mx-auto mt-8 max-w-2xl rounded-2xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
-        No featured courses yet. Select courses in admin under “Homepage: Featured Courses”.
+        No featured courses yet. Select courses in admin under "Homepage: Featured Courses".
       </div>
     );
   }
@@ -432,20 +477,24 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
   const subTitles = course.subCourses || [];
   const extra = Math.max(0, subTitles.length - 4);
 
+  const price = Number(course.price || 0);
+  const affiliateEarn = Math.floor((price * AFFILIATE_PCT) / 100);
+  const buyerCashback = Math.floor((price * CASHBACK_PCT) / 100);
+
+  const coverSrc =
+    course.imageUrl?.trim() ? course.imageUrl : "/images/course-fallback.jpg";
+
   return (
     <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       {/* Cover */}
       <div className="relative h-48 w-full">
-        {course.imageUrl ? (
-          <Image src={course.imageUrl} alt={course.name} fill className="object-cover" />
-        ) : (
-          <Image
-            src="https://images.unsplash.com/photo-1553877522-43269d4ea984?q=80&w=1600&auto=format&fit=crop"
-            alt={course.name}
-            fill
-            className="object-cover"
-          />
-        )}
+        <Image
+          src={coverSrc}
+          alt={course.name}
+          fill
+          sizes="(max-width: 1024px) 100vw, 33vw"
+          className="object-cover"
+        />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent" />
         {(course.badge || course.highlight) && (
           <div className="absolute top-4 right-4">
@@ -487,13 +536,23 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
         {/* Price */}
         <div className="mt-4 flex items-baseline gap-1">
           <span className="text-3xl font-extrabold tracking-tight">
-            Rs {(course.price || 0).toLocaleString()}
+            Rs {price.toLocaleString()}
           </span>
           <span className="text-sm text-slate-500">/ lifetime</span>
         </div>
 
+        {/* Payout + Cashback */}
+        <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+          <div className="inline-flex items-center justify-center gap-1 rounded-full bg-emerald-50 px-2 py-1 font-semibold text-emerald-700 ring-1 ring-emerald-200">
+            Affiliate Earn: Rs {affiliateEarn.toLocaleString()}
+          </div>
+          <div className="inline-flex items-center justify-center gap-1 rounded-full bg-sky-50 px-2 py-1 font-semibold text-sky-700 ring-1 ring-sky-200">
+            Cashback: Rs {buyerCashback.toLocaleString()}
+          </div>
+        </div>
+
         {/* Perks */}
-        <div className="mt-5 flex items-center justify-between text-xs text-slate-500">
+        <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
           <span className="inline-flex items-center gap-1">
             <ShieldIcon className="h-4 w-4 text-indigo-600" /> Lifetime Access
           </span>
@@ -616,7 +675,7 @@ function SparkleIcon(props: SVGProps<SVGSVGElement>) {
 }
 function CheckIcon(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden {...props}>
+    <svg viewBox="0 0 20 20" aria-hidden fill="currentColor" {...props}>
       <path
         fillRule="evenodd"
         d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0L3.293 9.207a1 1 0 011.414-1.414l3.043 3.043 6.543-6.543a1 1 0 011.414 0z"
@@ -663,7 +722,7 @@ function UsersIcon(props: SVGProps<SVGSVGElement>) {
 function ClockIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
-      <path d="M12 2a10 10 0 1010 10A10.011 10.011 0 0012 2zm1 11h4v-2h-3V7h-2v6z" />
+      <path d="M12 2a10 10 0 1010 10A10.011 10.011 0 0012 2zm1 11h4v-2h-2V7h-2v6z" />
     </svg>
   );
 }

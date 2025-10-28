@@ -12,14 +12,27 @@ type User = {
   name: string;
   email: string;
   imageUrl?: string;
-  totalEarnings: number;
+  totalEarnings: number; // kept for reference
   balance: number;
   phone?: string;
   status?: string;
 };
 type UsersMap = Record<string, User>;
+
 type CommissionDB = { referrerId: string; amount: number | string; timestamp: number | string };
 type CommissionEvent = { referrerId: string; amount: number; timestamp: number };
+
+type CashbackDB = { userId: string; amount: number | string; timestamp: number | string };
+type CashbackEvent = { userId: string; amount: number; timestamp: number };
+
+type OrderDbRec = {
+  courseId?: string;
+  status?: "Pending Approval" | "Completed" | "Rejected";
+};
+type PackageDbRec = { price?: number | string };
+
+type WithdrawalDB = { amount?: number | string; status?: "Pending" | "Completed" | "Rejected" };
+
 type LeaderboardEntry = { user: User; earnings: number };
 
 // --- HELPERS ---
@@ -30,20 +43,35 @@ const formatCurrency = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
 
 const normalizeCommission = (c: CommissionDB): CommissionEvent | null => {
   if (!c?.referrerId) return null;
-  const amount = typeof c.amount === 'number' ? c.amount : parseFloat(c.amount);
+  const amount = typeof c.amount === 'number' ? c.amount : parseFloat(String(c.amount));
   const ts = typeof c.timestamp === 'number' ? c.timestamp : Date.parse(String(c.timestamp));
   if (!isFinite(amount) || !isFinite(ts)) return null;
   return { referrerId: c.referrerId, amount, timestamp: ts };
+};
+const normalizeCashback = (c: CashbackDB): CashbackEvent | null => {
+  if (!c?.userId) return null;
+  const amount = typeof c.amount === 'number' ? c.amount : parseFloat(String(c.amount));
+  const ts = typeof c.timestamp === 'number' ? c.timestamp : Date.parse(String(c.timestamp));
+  if (!isFinite(amount) || !isFinite(ts)) return null;
+  return { userId: c.userId, amount, timestamp: ts };
 };
 
 export default function AdminRanksPage() {
   const [allUsers, setAllUsers] = useState<UsersMap>({});
   const [allCommissions, setAllCommissions] = useState<CommissionEvent[]>([]);
+  const [allCashbacks, setAllCashbacks] = useState<CashbackEvent[]>([]);
+  const [ordersMap, setOrdersMap] = useState<Record<string, OrderDbRec>>({});
+  const [packagesMap, setPackagesMap] = useState<Record<string, PackageDbRec>>({});
+  const [withdrawalsMap, setWithdrawalsMap] = useState<Record<string, WithdrawalDB>>({});
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const usersRef = dbRef(database, "users");
     const commissionsRef = dbRef(database, "commissions");
+    const cashbacksRef = dbRef(database, "cashbacks");
+    const ordersRef = dbRef(database, "orders");
+    const packagesRef = dbRef(database, "packages");
+    const withdrawalsRef = dbRef(database, "withdrawalRequests");
 
     const unsubUsers = onValue(usersRef, (snapshot) => {
       const data = (snapshot.val() || {}) as Record<string, Omit<User, 'id'>>;
@@ -55,8 +83,8 @@ export default function AdminRanksPage() {
             name: u.name,
             email: u.email || '',
             imageUrl: u.imageUrl,
-            totalEarnings: u.totalEarnings || 0,
-            balance: u.balance || 0,
+            totalEarnings: typeof u.totalEarnings === 'number' ? u.totalEarnings : 0,
+            balance: typeof u.balance === 'number' ? u.balance : 0,
             phone: u.phone,
             status: u.status,
           };
@@ -72,55 +100,97 @@ export default function AdminRanksPage() {
       setAllCommissions(list);
     });
 
+    const unsubCashbacks = onValue(cashbacksRef, (snapshot) => {
+      const data = (snapshot.val() || {}) as Record<string, CashbackDB>;
+      const list = Object.values(data).map(normalizeCashback).filter(Boolean) as CashbackEvent[];
+      setAllCashbacks(list);
+    });
+
+    const unsubOrders = onValue(ordersRef, (snapshot) => {
+      setOrdersMap((snapshot.val() as Record<string, OrderDbRec>) || {});
+    });
+
+    const unsubPackages = onValue(packagesRef, (snapshot) => {
+      setPackagesMap((snapshot.val() as Record<string, PackageDbRec>) || {});
+    });
+
+    const unsubWithdrawals = onValue(withdrawalsRef, (snapshot) => {
+      setWithdrawalsMap((snapshot.val() as Record<string, WithdrawalDB>) || {});
+    });
+
     return () => {
       unsubUsers();
       unsubCommissions();
+      unsubCashbacks();
+      unsubOrders();
+      unsubPackages();
+      unsubWithdrawals();
     };
   }, []);
 
+  // Platform total income = sum of purchased package prices for Completed orders
+  const platformIncome = useMemo(() => {
+    let sum = 0;
+    for (const o of Object.values(ordersMap)) {
+      if (o?.status !== "Completed" || !o.courseId) continue;
+      const price = packagesMap[o.courseId]?.price;
+      const n = typeof price === "number" ? price : Number(price || 0);
+      if (isFinite(n) && n > 0) sum += n;
+    }
+    return sum;
+  }, [ordersMap, packagesMap]);
+
+  // Processed withdrawals = sum of amounts where status Completed
+  const processedWithdrawals = useMemo(() => {
+    let sum = 0;
+    for (const r of Object.values(withdrawalsMap)) {
+      if (r?.status !== "Completed") continue;
+      const amt = typeof r.amount === "number" ? r.amount : Number(r.amount || 0);
+      if (isFinite(amt) && amt > 0) sum += amt;
+    }
+    return sum;
+  }, [withdrawalsMap]);
+
+  // Leaderboards: combined commissions + cashbacks events
   const leaderboards = useMemo(() => {
-    const calc = (fromTs?: number): LeaderboardEntry[] => {
-      const stream = fromTs ? allCommissions.filter(c => c.timestamp >= fromTs) : allCommissions;
-      const map = new Map<string, number>();
-      for (const c of stream) {
-        map.set(c.referrerId, (map.get(c.referrerId) || 0) + c.amount);
+    const buildCombinedCalc = (fromTs?: number) => {
+      const comStream = fromTs ? allCommissions.filter(c => c.timestamp >= fromTs) : allCommissions;
+      const cbStream = fromTs ? allCashbacks.filter(c => c.timestamp >= fromTs) : allCashbacks;
+
+      const sumByUser = new Map<string, number>();
+      for (const c of comStream) {
+        sumByUser.set(c.referrerId, (sumByUser.get(c.referrerId) || 0) + c.amount);
       }
+      for (const cb of cbStream) {
+        sumByUser.set(cb.userId, (sumByUser.get(cb.userId) || 0) + cb.amount);
+      }
+
       const entries: LeaderboardEntry[] = [];
-      for (const [uid, earnings] of map.entries()) {
+      for (const [uid, earnings] of sumByUser.entries()) {
         const user = allUsers[uid];
-        if (user) {
-          entries.push({ user, earnings });
-        }
+        if (user) entries.push({ user, earnings });
       }
       return entries.sort((a, b) => b.earnings - a.earnings).slice(0, 10);
     };
-    
-    const lifetimeEntries = Object.values(allUsers)
-        .filter(u => u.totalEarnings > 0)
-        .sort((a,b) => b.totalEarnings - a.totalEarnings)
-        .slice(0, 10)
-        .map(user => ({ user, earnings: user.totalEarnings }));
 
     return {
-      daily: calc(startOfToday()),
-      weekly: calc(startOfWeek()),
-      monthly: calc(startOfMonth()),
-      lifetime: lifetimeEntries,
+      daily: buildCombinedCalc(startOfToday()),
+      weekly: buildCombinedCalc(startOfWeek()),
+      monthly: buildCombinedCalc(startOfMonth()),
+      lifetime: buildCombinedCalc(undefined),
     };
-  }, [allUsers, allCommissions]);
+  }, [allUsers, allCommissions, allCashbacks]);
 
   const stats = useMemo(() => {
     const usersArray = Object.values(allUsers);
-    const activeEarners = usersArray.filter((u) => u.status === 'active' && u.totalEarnings > 0);
-    const totalEarnings = usersArray.reduce((sum, u) => sum + u.totalEarnings, 0);
-    const totalBalance = usersArray.reduce((sum, u) => sum + u.balance, 0);
+    const activeEarners = usersArray.filter((u) => u.status === 'active' && (u.totalEarnings > 0 || u.balance > 0));
     return {
       totalUsers: usersArray.length,
       activeEarners: activeEarners.length,
-      totalEarnings,
-      totalBalance,
+      totalIncome: platformIncome,                            // from orders
+      totalBalance: Math.max(0, platformIncome - processedWithdrawals), // income minus paid withdrawals
     };
-  }, [allUsers]);
+  }, [allUsers, platformIncome, processedWithdrawals]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8">
@@ -132,7 +202,7 @@ export default function AdminRanksPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <StatCard title="Total Users" value={stats.totalUsers.toString()} icon={<UsersIcon />} color="bg-blue-500" />
         <StatCard title="Active Earners" value={stats.activeEarners.toString()} icon={<UserCheckIcon />} color="bg-green-500" />
-        <StatCard title="Total Earnings" value={formatCurrency(stats.totalEarnings)} icon={<CashIcon />} color="bg-purple-500" />
+        <StatCard title="Total Earnings" value={formatCurrency(stats.totalIncome)} icon={<CashIcon />} color="bg-purple-500" />
         <StatCard title="Total Balance" value={formatCurrency(stats.totalBalance)} icon={<WalletIcon />} color="bg-orange-500" />
       </div>
 

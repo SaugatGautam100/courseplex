@@ -18,8 +18,8 @@ export default function UserDashboardLayout({ children }: { children: ReactNode 
           <header className="md:hidden sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 backdrop-blur-sm px-4">
             <div className="flex items-center gap-2">
               <Link href="/" className="flex items-center gap-1">
-              <Image src="/images/skillhubnepallogo.png" alt="Logo" width={28} height={28} />
-              <h1 className="text-xl font-bold text-slate-800">Skill Hub Nepal</h1>
+              <Image src="/images/courseplexlogo.png" alt="Logo" width={28} height={28} />
+              <h1 className="text-xl font-bold text-slate-800">Course Plex</h1>
               </Link>
             </div>
             <button onClick={() => setIsMobileMenuOpen(true)} className="p-2 rounded-md hover:bg-slate-100" aria-label="Open menu">

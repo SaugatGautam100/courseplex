@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { database, auth } from "@/lib/firebase";
 import { ref, onValue } from "firebase/database";
 
@@ -17,88 +17,169 @@ type UnifiedTransaction = {
 // Types for raw data from Firebase
 type WithdrawalDbRec = { product: string; amount: number; date: string; status: "Processed" | "Pending" | "Rejected" };
 
-// FIX: Added referrerId to the type definition
+// Commission/cashback raw events saved globally
 type CommissionDbRec = {
-  orderId: string;
-  amount: number;
-  timestamp: number;
-  userId: string;
-  referrerId?: string; // This property was missing
+  orderId?: string;
+  amount?: number | string;
+  timestamp?: number | string;
+  userId?: string;
+  referrerId?: string;
+  courseId?: string;
+};
+type CashbackDbRec = {
+  orderId?: string;
+  amount?: number | string;
+  timestamp?: number | string;
+  userId?: string; // the buyer (current user for cashback)
+  referrerId?: string;
+  courseId?: string;
 };
 
+type PackagesMap = Record<string, { name?: string }>;
+
 export default function TransactionsPage() {
-  const [transactions, setTransactions] = useState<UnifiedTransaction[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [uid, setUid] = useState<string | null>(null);
+
+  const [withdrawals, setWithdrawals] = useState<UnifiedTransaction[]>([]);
+  const [commissionsRaw, setCommissionsRaw] = useState<Record<string, CommissionDbRec>>({});
+  const [cashbacksRaw, setCashbacksRaw] = useState<Record<string, CashbackDbRec>>({});
+  const [packagesMap, setPackagesMap] = useState<PackagesMap>({});
+  const [loaded, setLoaded] = useState({ withdrawals: false, commissions: false, cashbacks: false, packages: false });
 
   useEffect(() => {
-    const unsubscribeAuth = auth.onAuthStateChanged((currentUser) => {
+    const unsubAuth = auth.onAuthStateChanged((currentUser) => {
       if (!currentUser) {
-        setLoading(false);
+        setUid(null);
+        setLoaded({ withdrawals: true, commissions: true, cashbacks: true, packages: true });
         return;
       }
+      setUid(currentUser.uid);
 
-      // 1. Listener for withdrawals
+      // Packages (for names)
+      const pkRef = ref(database, "packages");
+      const unsubPk = onValue(
+        pkRef,
+        (snap) => {
+          setPackagesMap((snap.val() as PackagesMap) || {});
+          setLoaded((s) => ({ ...s, packages: true }));
+        },
+        () => setLoaded((s) => ({ ...s, packages: true }))
+      );
+
+      // Withdrawals from user's node
       const withdrawalRef = ref(database, `users/${currentUser.uid}/transactions`);
-      const unsubscribeWithdrawals = onValue(withdrawalRef, (withdrawalSnap) => {
-        const withdrawalData = (withdrawalSnap.val() as Record<string, WithdrawalDbRec>) || {};
-        const withdrawalList: UnifiedTransaction[] = Object.entries(withdrawalData).map(
-          ([id, t]) => ({
+      const unsubWithdrawals = onValue(
+        withdrawalRef,
+        (withdrawalSnap) => {
+          const withdrawalData = (withdrawalSnap.val() as Record<string, WithdrawalDbRec>) || {};
+          const withdrawalList: UnifiedTransaction[] = Object.entries(withdrawalData).map(([id, t]) => ({
             id,
             description: t.product || "Withdrawal",
-            amount: t.amount,
+            amount: Number(t.amount || 0),
             date: t.date,
             status: t.status,
             type: "withdrawal",
-          })
-        );
+          }));
+          setWithdrawals(withdrawalList);
+          setLoaded((s) => ({ ...s, withdrawals: true }));
+        },
+        () => setLoaded((s) => ({ ...s, withdrawals: true }))
+      );
 
-        // 2. Listener for earnings (commissions)
-        const commissionsRef = ref(database, "commissions");
-        const unsubscribeCommissions = onValue(commissionsRef, (commissionSnap) => {
-          const commissionData = (commissionSnap.val() as Record<string, CommissionDbRec>) || {};
-          const commissionList: UnifiedTransaction[] = [];
-          
-          for (const [id, c] of Object.entries(commissionData)) {
-            // Check if this commission belongs to the current user
-            if (c.referrerId === currentUser.uid) {
-              commissionList.push({
-                id,
-                description: `Referral Commission`,
-                amount: c.amount,
-                date: new Date(c.timestamp).toISOString(),
-                status: "Completed",
-                type: "earning",
-              });
-            }
-          }
+      // Commissions (global)
+      const commissionsRef = ref(database, "commissions");
+      const unsubCommissions = onValue(
+        commissionsRef,
+        (commissionSnap) => {
+          setCommissionsRaw((commissionSnap.val() as Record<string, CommissionDbRec>) || {});
+          setLoaded((s) => ({ ...s, commissions: true }));
+        },
+        () => setLoaded((s) => ({ ...s, commissions: true }))
+      );
 
-          // 3. Merge and sort all transactions
-          const allTransactions = [...withdrawalList, ...commissionList];
-          allTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+      // Cashbacks (global)
+      const cashbacksRef = ref(database, "cashbacks");
+      const unsubCashbacks = onValue(
+        cashbacksRef,
+        (cashbackSnap) => {
+          setCashbacksRaw((cashbackSnap.val() as Record<string, CashbackDbRec>) || {});
+          setLoaded((s) => ({ ...s, cashbacks: true }));
+        },
+        () => setLoaded((s) => ({ ...s, cashbacks: true }))
+      );
 
-          setTransactions(allTransactions);
-          setLoading(false);
-        });
-        
-        // This inner cleanup is important
-        return () => unsubscribeCommissions();
-      });
-
-      // Main cleanup function
       return () => {
-        unsubscribeWithdrawals();
-        // The commissions listener is cleaned up by the withdrawals listener's return
+        unsubPk();
+        unsubWithdrawals();
+        unsubCommissions();
+        unsubCashbacks();
       };
     });
 
-    return () => unsubscribeAuth();
+    return () => unsubAuth();
   }, []);
+
+  const commissionTxs: UnifiedTransaction[] = useMemo(() => {
+    if (!uid) return [];
+    const list: UnifiedTransaction[] = [];
+    Object.entries(commissionsRaw).forEach(([id, c]) => {
+      if (!c || c.referrerId !== uid) return;
+      const amount =
+        typeof c.amount === "number" ? c.amount : typeof c.amount === "string" ? Number(c.amount) : 0;
+      const ts =
+        typeof c.timestamp === "number" ? c.timestamp : typeof c.timestamp === "string" ? Date.parse(c.timestamp) : 0;
+      if (!isFinite(amount) || amount <= 0 || !isFinite(ts) || ts <= 0) return;
+
+      const courseName = c.courseId ? packagesMap[c.courseId]?.name : undefined;
+      list.push({
+        id,
+        description: `Referral Commission${courseName ? ` — ${courseName}` : ""}`,
+        amount,
+        date: new Date(ts).toISOString(),
+        status: "Completed",
+        type: "earning",
+      });
+    });
+    return list;
+  }, [uid, commissionsRaw, packagesMap]);
+
+  const cashbackTxs: UnifiedTransaction[] = useMemo(() => {
+    if (!uid) return [];
+    const list: UnifiedTransaction[] = [];
+    Object.entries(cashbacksRaw).forEach(([id, cb]) => {
+      if (!cb || cb.userId !== uid) return;
+      const amount =
+        typeof cb.amount === "number" ? cb.amount : typeof cb.amount === "string" ? Number(cb.amount) : 0;
+      const ts =
+        typeof cb.timestamp === "number" ? cb.timestamp : typeof cb.timestamp === "string" ? Date.parse(cb.timestamp) : 0;
+      if (!isFinite(amount) || amount <= 0 || !isFinite(ts) || ts <= 0) return;
+
+      const courseName = cb.courseId ? packagesMap[cb.courseId]?.name : undefined;
+      list.push({
+        id,
+        description: `10% Cashback${courseName ? ` — ${courseName}` : ""}`,
+        amount,
+        date: new Date(ts).toISOString(),
+        status: "Completed",
+        type: "earning",
+      });
+    });
+    return list;
+  }, [uid, cashbacksRaw, packagesMap]);
+
+  const transactions = useMemo(() => {
+    const all = [...withdrawals, ...commissionTxs, ...cashbackTxs];
+    all.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return all;
+  }, [withdrawals, commissionTxs, cashbackTxs]);
+
+  const loading = !loaded.withdrawals || !loaded.commissions || !loaded.cashbacks || !loaded.packages;
 
   return (
     <div>
       <header className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Transaction History</h1>
-        <p className="mt-2 text-slate-600">A record of all your referral earnings and withdrawals.</p>
+        <p className="mt-2 text-slate-600">A record of all your referral earnings, cashbacks, and withdrawals.</p>
       </header>
 
       {/* Mobile cards */}

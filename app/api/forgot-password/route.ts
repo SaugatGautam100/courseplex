@@ -47,7 +47,7 @@ const resetLink = `${origin}/reset-password?token=${token}&email=${encodeURIComp
 
 await sendEmailViaGmailAPI({
   to: email,
-  subject: "Reset your Skill Hub Nepal password",
+  subject: "Reset your Course Plex password",
   html: `
     <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;">
       <h2>Reset your password</h2>
@@ -59,7 +59,7 @@ await sendEmailViaGmailAPI({
         </a>
       </p>
       <p>If you didn’t request this, you can safely ignore this email.</p>
-      <p>— Skill Hub Nepal</p>
+      <p>— Course Plex</p>
     </div>
   `,
 });

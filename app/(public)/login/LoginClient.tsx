@@ -131,7 +131,7 @@ export default function LoginClient() {
       <section className="mx-auto max-w-md px-4 py-16 md:py-24">
         <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <div className="mb-6 text-center">
-            <h1 className="text-2xl font-semibold text-slate-900">Log in to Skill Hub Nepal</h1>
+            <h1 className="text-2xl font-semibold text-slate-900">Log in to Course Plex</h1>
             <p className="mt-2 text-base text-slate-600">Welcome back! Please enter your details to continue.</p>
           </div>
 

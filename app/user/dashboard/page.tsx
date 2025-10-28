@@ -25,7 +25,7 @@ type UserProfile = {
   email: string;
   phone: string;
   balance: number;
-  totalEarnings: number;
+  totalEarnings: number; // kept, but lifetime stat uses combined events now
   imageUrl?: string;
   courseId: string; // legacy single course
   ownedCourseIds?: Record<string, boolean>; // multi-course
@@ -35,6 +35,7 @@ type UserProfile = {
 };
 
 type CommissionEvent = { amount: number; timestamp: number; referrerId?: string; orderId?: string };
+type CashbackEvent = { amount: number; timestamp: number; userId?: string; orderId?: string; referrerId?: string };
 type CoursePackage = { id: string; name: string; imageUrl: string; price?: number; commissionPercent?: number };
 type Target = { goalAmount: number; prize: string; imageUrl?: string };
 type Order = {
@@ -45,6 +46,7 @@ type Order = {
   status?: "Pending Approval" | "Completed" | "Rejected";
   createdAt?: string;
   commissionAmount?: number;
+  cashbackAmount?: number;
 };
 
 type PackagesDb = Record<string, Omit<CoursePackage, "id"> | undefined>;
@@ -55,6 +57,14 @@ type CommissionsDbRec = {
   orderId?: string;
 };
 type CommissionsDb = Record<string, CommissionsDbRec | undefined>;
+type CashbacksDbRec = {
+  amount?: number | string;
+  timestamp?: number | string;
+  userId?: string;
+  referrerId?: string;
+  orderId?: string;
+};
+type CashbacksDb = Record<string, CashbacksDbRec | undefined>;
 type OrdersDbRec = {
   userId: string;
   referrerId?: string;
@@ -62,6 +72,7 @@ type OrdersDbRec = {
   status?: "Pending Approval" | "Completed" | "Rejected";
   createdAt?: string;
   commissionAmount?: number;
+  cashbackAmount?: number;
 };
 type OrdersDb = Record<string, OrdersDbRec | undefined>;
 
@@ -84,7 +95,7 @@ const startOfMonth = () => {
   return d.getTime();
 };
 
-/* ================== Commission helpers ================== */
+/* ================== Normalizers ================== */
 function normalizeCommissionFromCommissions(raw: CommissionsDbRec | undefined): CommissionEvent | null {
   if (!raw) return null;
   const amount =
@@ -97,6 +108,19 @@ function normalizeCommissionFromCommissions(raw: CommissionsDbRec | undefined): 
   return { amount, timestamp: ts, referrerId: raw.referrerId, orderId: raw.orderId };
 }
 
+function normalizeCashbackFromDb(raw: CashbacksDbRec | undefined): CashbackEvent | null {
+  if (!raw) return null;
+  const amount =
+    typeof raw.amount === "number" ? raw.amount :
+    typeof raw.amount === "string" ? parseFloat(raw.amount) : NaN;
+  const ts =
+    typeof raw.timestamp === "number" ? raw.timestamp :
+    typeof raw.timestamp === "string" ? Date.parse(raw.timestamp) : NaN;
+  if (!isFinite(amount) || !isFinite(ts) || amount <= 0) return null;
+  return { amount, timestamp: ts, userId: raw.userId, referrerId: raw.referrerId, orderId: raw.orderId };
+}
+
+/* ================== Fallback derivations from orders ================== */
 function deriveCommissionFromOrder(
   o: Order,
   packagesMap: Record<string, CoursePackage>,
@@ -119,6 +143,16 @@ function deriveCommissionFromOrder(
   return { amount, timestamp: ts, referrerId: o.referrerId, orderId: o.id };
 }
 
+function deriveCashbackFromOrder(o: Order): CashbackEvent | null {
+  if (o.status !== "Completed" || !o.userId || !o.createdAt) return null;
+  const ts = Date.parse(o.createdAt);
+  if (!isFinite(ts)) return null;
+  if (typeof o.cashbackAmount === "number" && isFinite(o.cashbackAmount) && o.cashbackAmount > 0) {
+    return { amount: o.cashbackAmount, timestamp: ts, userId: o.userId, referrerId: o.referrerId, orderId: o.id };
+  }
+  return null;
+}
+
 /* ================== Page ================== */
 export default function DashboardPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -126,7 +160,9 @@ export default function DashboardPage() {
   const [monthlyTarget, setMonthlyTarget] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Sources
   const [commissionEventsFromDb, setCommissionEventsFromDb] = useState<CommissionEvent[]>([]);
+  const [cashbackEventsFromDb, setCashbackEventsFromDb] = useState<CashbackEvent[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [packagesMap, setPackagesMap] = useState<Record<string, CoursePackage>>({});
 
@@ -135,6 +171,7 @@ export default function DashboardPage() {
   useEffect(() => {
     let unUser: (() => void) | null = null;
     let unCommissions: (() => void) | null = null;
+    let unCashbacks: (() => void) | null = null;
     let unOrders: (() => void) | null = null;
     let unTarget: (() => void) | null = null;
 
@@ -144,7 +181,7 @@ export default function DashboardPage() {
         return;
       }
 
-      // Load courses (packages) map
+      // Load packages map
       const pkSnap = await get(dbRef(database, "packages"));
       const pkVal = (pkSnap.val() as PackagesDb) || {};
       const pkMap: Record<string, CoursePackage> = {};
@@ -184,7 +221,7 @@ export default function DashboardPage() {
           };
           setUser(profile);
 
-          // Effective "primary" course for the header badge (special takes priority, else the first owned, else legacy)
+          // Effective primary course for header badge
           let effectiveId: string | null = null;
           if (specialActive && specialAccess!.packageId) {
             effectiveId = specialAccess!.packageId;
@@ -219,7 +256,7 @@ export default function DashboardPage() {
         setLoading(false);
       });
 
-      // Commissions
+      // Commissions (referrer earnings)
       const commissionsRef = dbRef(database, "commissions");
       unCommissions = onValue(
         commissionsRef,
@@ -228,7 +265,7 @@ export default function DashboardPage() {
           const list: CommissionEvent[] = [];
           Object.values(v).forEach((item) => {
             const ev = normalizeCommissionFromCommissions(item);
-            if (ev && ev.referrerId === currentUser.uid) list.push(ev);
+            if (ev && item?.referrerId === currentUser.uid) list.push(ev);
           });
           list.sort((a, b) => b.timestamp - a.timestamp);
           setCommissionEventsFromDb(list);
@@ -236,7 +273,24 @@ export default function DashboardPage() {
         () => setCommissionEventsFromDb([])
       );
 
-      // Orders
+      // Cashbacks (customer earnings)
+      const cashbacksRef = dbRef(database, "cashbacks");
+      unCashbacks = onValue(
+        cashbacksRef,
+        (snap) => {
+          const v = (snap.val() as CashbacksDb) || {};
+          const list: CashbackEvent[] = [];
+          Object.values(v).forEach((item) => {
+            const ev = normalizeCashbackFromDb(item);
+            if (ev && item?.userId === currentUser.uid) list.push(ev);
+          });
+          list.sort((a, b) => b.timestamp - a.timestamp);
+          setCashbackEventsFromDb(list);
+        },
+        () => setCashbackEventsFromDb([])
+      );
+
+      // Orders fallback
       const ordersRef = dbRef(database, "orders");
       unOrders = onValue(
         ordersRef,
@@ -253,6 +307,7 @@ export default function DashboardPage() {
               status: o.status,
               createdAt: o.createdAt,
               commissionAmount: typeof o.commissionAmount === "number" ? o.commissionAmount : undefined,
+              cashbackAmount: typeof o.cashbackAmount === "number" ? o.cashbackAmount : undefined,
             });
           });
           setOrders(list);
@@ -285,6 +340,7 @@ export default function DashboardPage() {
       unsubAuth();
       if (unUser) unUser();
       if (unCommissions) unCommissions();
+      if (unCashbacks) unCashbacks();
       if (unOrders) unOrders();
       if (unTarget) unTarget();
     };
@@ -305,7 +361,6 @@ export default function DashboardPage() {
       const p = packagesMap[cid];
       if (p?.name) names.push(p.name);
     });
-    // dedupe + sort
     const seen = new Set<string>();
     const unique = names.filter((n) => {
       if (seen.has(n)) return false;
@@ -317,9 +372,10 @@ export default function DashboardPage() {
   }, [user, packagesMap]);
 
   /* ================== Earnings assembly ================== */
+  // Prefer /commissions, fallback to orders
   const commissionEvents: CommissionEvent[] = useMemo(() => {
-    if (commissionEventsFromDb.length > 0) return commissionEventsFromDb;
     if (!user) return [];
+    if (commissionEventsFromDb.length > 0) return commissionEventsFromDb;
     const referrerSpecialPercent = user.specialAccess?.commissionPercent;
     const derived: CommissionEvent[] = [];
     for (const o of orders) {
@@ -331,11 +387,32 @@ export default function DashboardPage() {
     return derived;
   }, [commissionEventsFromDb, orders, packagesMap, user]);
 
+  // Prefer /cashbacks, fallback to orders
+  const cashbackEvents: CashbackEvent[] = useMemo(() => {
+    if (!user) return [];
+    if (cashbackEventsFromDb.length > 0) return cashbackEventsFromDb;
+    const derived: CashbackEvent[] = [];
+    for (const o of orders) {
+      if (o.userId !== user.id) continue;
+      const ev = deriveCashbackFromOrder(o);
+      if (ev) derived.push(ev);
+    }
+    derived.sort((a, b) => b.timestamp - a.timestamp);
+    return derived;
+  }, [cashbackEventsFromDb, orders, user]);
+
+  // Combine both streams for totals and charts
+  const incomeEvents = useMemo(() => {
+    const both = [...commissionEvents, ...cashbackEvents].map((e) => ({ amount: e.amount, timestamp: e.timestamp }));
+    both.sort((a, b) => b.timestamp - a.timestamp);
+    return both;
+  }, [commissionEvents, cashbackEvents]);
+
   const timeBasedEarnings = useMemo(() => {
     const today = startOfToday();
     const week = startOfWeek();
     const month = startOfMonth();
-    return commissionEvents.reduce(
+    return incomeEvents.reduce(
       (acc, ev) => {
         const amt = ev.amount || 0;
         if (ev.timestamp >= today) acc.daily += amt;
@@ -345,7 +422,11 @@ export default function DashboardPage() {
       },
       { daily: 0, weekly: 0, monthly: 0 }
     );
-  }, [commissionEvents]);
+  }, [incomeEvents]);
+
+  const lifetimeTotal = useMemo(() => {
+    return incomeEvents.reduce((sum, ev) => sum + (ev.amount || 0), 0);
+  }, [incomeEvents]);
 
   const chartData = useMemo(() => {
     const days = Array.from({ length: 7 }, (_, i) => {
@@ -361,12 +442,12 @@ export default function DashboardPage() {
         earnings: 0,
       };
     });
-    for (const ev of commissionEvents) {
+    for (const ev of incomeEvents) {
       const bucket = days.find((b) => ev.timestamp >= b.start && ev.timestamp <= b.end);
       if (bucket) bucket.earnings += ev.amount;
     }
     return days.map((d) => ({ name: d.name, earnings: Math.round(d.earnings) }));
-  }, [commissionEvents]);
+  }, [incomeEvents]);
 
   const monthlyProgress = useMemo(() => {
     if (!monthlyTarget || monthlyTarget.goalAmount <= 0) return 0;
@@ -437,7 +518,7 @@ export default function DashboardPage() {
   return (
     <>
       <div className="space-y-8">
-        {/* Header with profile + chips, and inline course names (no separate section) */}
+        {/* Header */}
         <header className="flex flex-col sm:flex-row items-center gap-6 rounded-lg border bg-white p-6 shadow-sm">
           <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex-shrink-0">
             {user.imageUrl ? (
@@ -472,7 +553,7 @@ export default function DashboardPage() {
               </Link>
             </div>
 
-            {/* Show owned course names inline as chips (no separate section) */}
+            {/* Owned courses chips */}
             {ownedCourseNames.length > 0 && (
               <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
                 {ownedCourseNames.map((name) => (
@@ -514,14 +595,14 @@ export default function DashboardPage() {
           />
           <StatCard
             title="Lifetime Earnings"
-            value={<MoneyCounter value={Math.round(user.totalEarnings || 0)} />}
+            value={<MoneyCounter value={Math.round(lifetimeTotal)} />}
             icon={<TrophyIcon />}
             color="from-amber-400 to-orange-500"
           />
         </section>
 
         {/* Monthly Target */}
-        {monthlyTarget && monthlyTarget.goalAmount > 0 && (
+        {monthlyTarget && (
           <section className="rounded-lg border bg-white p-6 shadow-sm">
             <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-4">
               <div className="flex-grow">
@@ -539,7 +620,7 @@ export default function DashboardPage() {
                 <div className="mt-4 max-w-sm">
                   <div className="flex justify-between text-sm font-semibold text-slate-600 mb-1">
                     <span>Rs {Math.round(timeBasedEarnings.monthly).toLocaleString()}</span>
-                    <span>Rs {Math.round(monthlyTarget.goalAmount).toLocaleString()}</span>
+                    <span>Rs {Math.round(Number(monthlyTarget.goalAmount || 0)).toLocaleString()}</span>
                   </div>
                   <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden">
                     <div
@@ -587,9 +668,9 @@ export default function DashboardPage() {
               </LineChart>
             </ResponsiveContainer>
           </div>
-          {commissionEvents.length === 0 && (
+          {incomeEvents.length === 0 && (
             <p className="text-center text-sm text-slate-500 mt-4">
-              No commission data available yet. Start referring to see your earnings!
+              No earnings yet. Refer friends or purchase a course via a referrer to see your earnings grow!
             </p>
           )}
         </section>

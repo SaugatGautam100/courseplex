@@ -15,15 +15,15 @@ const roboto = Roboto({
 export const metadata: Metadata = {
   // --- Core Metadata ---
   title: {
-    template: "%s | Skill Hub Nepal", // Appends site name to sub-page titles
-    default: "Skill Hub Nepal - #1 Digital Marketing & Affiliate Courses in Nepal", // Default title for homepage
+    template: "%s | Course Plex", // Appends site name to sub-page titles
+    default: "Course Plex - #1 Digital Marketing & Affiliate Courses in Nepal", // Default title for homepage
   },
-  description: "Join Skill Hub Nepal for Nepal's top-rated digital marketing, affiliate marketing, and SEO courses. Learn practical skills, get career guidance, and start earning online. Enroll now!",
+  description: "Join Course Plex for Nepal's top-rated digital marketing, affiliate marketing, and SEO courses. Learn practical skills, get career guidance, and start earning online. Enroll now!",
   
   // --- Keywords (Extensive List) ---
   keywords: [
     // Primary Keywords
-    "digital marketing course in nepal", "online courses nepal", "skill hub nepal", "affiliate marketing nepal", "seo training nepal",
+    "digital marketing course in nepal", "online courses nepal", "Course Plex", "affiliate marketing nepal", "seo training nepal",
     "learn digital marketing nepal", "social media marketing course nepal", "online earning in nepal",
     
     // Course-Specific Keywords
@@ -61,28 +61,28 @@ export const metadata: Metadata = {
   ],
   
   // --- Author & Branding ---
-  authors: [{ name: "Skill Hub Nepal", url: "https://skillhub.com.np" }],
+  authors: [{ name: "Course Plex", url: "https://sajilointerior.com.np" }],
   creator: "App Plex",
-  publisher: "Skill Hub Nepal",
+  publisher: "Course Plex",
 
   // --- Technical SEO ---
-  metadataBase: new URL("https://skillhub.com.np"),
+  metadataBase: new URL("https://sajilointerior.com.np"),
   alternates: {
     canonical: '/',
   },
 
   // --- Social Media & Sharing (Open Graph for Facebook, LinkedIn, etc.) ---
   openGraph: {
-    title: "Skill Hub Nepal - #1 Digital Marketing & Affiliate Courses",
+    title: "Course Plex - #1 Digital Marketing & Affiliate Courses",
     description: "Learn practical skills in SEO, social media, and affiliate marketing to build your career and start earning online.",
-    url: "https://skillhub.com.np",
-    siteName: "Skill Hub Nepal",
+    url: "https://sajilointerior.com.np",
+    siteName: "Course Plex",
     images: [
       {
-        url: "/skillhub-og-image.png", // Place this image in your `public` folder
+        url: "/sajilointerior-og-image.png", // Place this image in your `public` folder
         width: 1200,
         height: 630,
-        alt: "Skill Hub Nepal - Learn and Earn",
+        alt: "Course Plex - Learn and Earn",
       },
     ],
     locale: "en_US",
@@ -92,9 +92,9 @@ export const metadata: Metadata = {
   // --- Twitter-Specific Card ---
   twitter: {
     card: "summary_large_image",
-    title: "Skill Hub Nepal - #1 Digital Marketing & Affiliate Courses",
+    title: "Course Plex - #1 Digital Marketing & Affiliate Courses",
     description: "Learn practical skills in SEO, social media, and affiliate marketing to build your career and start earning online.",
-    images: ["/skillhub-og-image.png"], // Must be an absolute URL in production
+    images: ["/sajilointerior-og-image.png"], // Must be an absolute URL in production
   },
   
   // --- Icons ---
@@ -109,9 +109,9 @@ export const metadata: Metadata = {
 const jsonLd = {
   "@context": "https://schema.org",
   "@type": "Organization",
-  "name": "Skill Hub Nepal",
-  "url": "https://skillhub.com.np",
-  "logo": "https://skillhub.com.np/images/skillhubnepallogo.png", // MUST be an absolute URL
+  "name": "Course Plex",
+  "url": "https://sajilointerior.com.np",
+  "logo": "https://sajilointerior.com.np/images/courseplexlogo.png", // MUST be an absolute URL
   "contactPoint": {
     "@type": "ContactPoint",
     "telephone": "+977-970-572-6179",

@@ -3,8 +3,8 @@ import Image from "next/image";
 import type { SVGProps } from "react";
 
 export const metadata = {
-  title: "Privacy Policy - Skill Hub Nepal",
-  description: "Learn how Skill Hub Nepal collects, uses, and protects your personal information.",
+  title: "Privacy Policy - Course Plex",
+  description: "Learn how Course Plex collects, uses, and protects your personal information.",
 };
 
 export default function PrivacyPolicyPage() {
@@ -63,7 +63,7 @@ export default function PrivacyPolicyPage() {
           <h2>Contact Us</h2>
           <p>
             If you have any questions about this Privacy Policy, please contact us at{" "}
-            <a href="mailto:support@skillhub.com.np">support@skillhub.com.np</a>.
+            <a href="mailto:support@sajilointerior.com.np">support@sajilointerior.com.np</a>.
           </p>
         </div>
       </section>
@@ -75,7 +75,7 @@ export default function PrivacyPolicyPage() {
           <div className="flex justify-center">
             <Image
               src="/images/shn-buisnesscertificate.jpg" // REPLACE with your actual image path
-              alt="Skill Hub Nepal Business Certificate"
+              alt="Course Plex Business Certificate"
               width={800}
               height={600}
               className="rounded-lg shadow-lg ring-1 ring-slate-200 max-w-full"
@@ -83,7 +83,7 @@ export default function PrivacyPolicyPage() {
             />
           </div>
           <p className="text-center mt-4 text-sm text-slate-600">
-            Official registration certificate for Skill Hub Nepal.
+            Official registration certificate for Course Plex.
           </p>
         </div>
       </section>

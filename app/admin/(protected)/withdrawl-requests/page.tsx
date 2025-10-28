@@ -121,7 +121,7 @@ export default function WithdrawalRequestsPage() {
           body: JSON.stringify({
             to: userEmail,
             subject: `Your Withdrawal Request: ${newStatus}`,
-            htmlContent: `<h1>Withdrawal Status Update</h1><p>Hello ${request.userName},</p>${emailHtmlContent}<p>Thank you,<br/>The Skill Hub Nepal Team</p>`,
+            htmlContent: `<h1>Withdrawal Status Update</h1><p>Hello ${request.userName},</p>${emailHtmlContent}<p>Thank you,<br/>The Course Plex Team</p>`,
           }),
         });
       }

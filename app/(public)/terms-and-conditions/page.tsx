@@ -2,8 +2,8 @@
 import type { SVGProps } from "react";
 
 export const metadata = {
-  title: "Terms and Conditions - Skill Hub Nepal",
-  description: "Read the terms and conditions for using the Skill Hub Nepal platform and services.",
+  title: "Terms and Conditions - Course Plex",
+  description: "Read the terms and conditions for using the Course Plex platform and services.",
 };
 
 export default function TermsAndConditionsPage() {
@@ -26,7 +26,7 @@ export default function TermsAndConditionsPage() {
 
           <h2>1. Acceptance of Terms</h2>
           <p>
-            By accessing and using the Skill Hub Nepal website and its services (the &quot;Service&quot;), you accept and agree to be bound by the terms and provision of this agreement.
+            By accessing and using the Course Plex website and its services (the &quot;Service&quot;), you accept and agree to be bound by the terms and provision of this agreement.
           </p>
 
           <h2>2. Account Registration and Responsibility</h2>
@@ -36,7 +36,7 @@ export default function TermsAndConditionsPage() {
 
           <h2>3. Payment and No Refund Policy</h2>
           <p>
-            All payments for course packages are final. **Skill Hub Nepal has a strict no-refund policy.** Once a payment is made and access to a course is granted, you are not eligible for a refund under any circumstances.
+            All payments for course packages are final. **Course Plex has a strict no-refund policy.** Once a payment is made and access to a course is granted, you are not eligible for a refund under any circumstances.
           </p>
           <p>
             It is your responsibility to ensure that the transaction code provided during payment is accurate. Incorrect transaction codes will lead to the rejection of your enrollment or upgrade request without a refund.
@@ -59,7 +59,7 @@ export default function TermsAndConditionsPage() {
 
           <h2>6. Limitation of Liability</h2>
           <p>
-            Skill Hub Nepal will not be liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, data, or other intangibles, resulting from your access to or use of, or inability to access or use, the service.
+            Course Plex will not be liable for any indirect, incidental, special, consequential, or punitive damages, including loss of profits, data, or other intangibles, resulting from your access to or use of, or inability to access or use, the service.
           </p>
           
           <h2>7. Changes to Terms</h2>

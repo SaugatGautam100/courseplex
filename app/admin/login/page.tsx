@@ -116,7 +116,7 @@ export default function AdminLoginPage() {
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <Link href="/" className="inline-block text-2xl font-bold text-slate-800">
-            Skill Hub Admin
+            Course Plex Admin
           </Link>
           <p className="mt-2 text-slate-600">Please sign in to continue.</p>
         </div>

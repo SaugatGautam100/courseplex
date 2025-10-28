@@ -24,7 +24,7 @@ export default function AdminLayoutClient({ children }: { children: ReactNode })
           <header className="md:hidden sticky top-0 z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-white/80 backdrop-blur-sm px-4">
             <div className="flex items-center gap-2">
               <Image
-                src="/images/skillhubnepallogo.png"
+                src="/images/courseplexlogo.png"
                 alt="Logo"
                 width={28}
                 height={28}

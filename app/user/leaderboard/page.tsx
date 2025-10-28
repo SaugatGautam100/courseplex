@@ -17,10 +17,13 @@ type Order = {
   status?: "Pending Approval" | "Completed" | "Rejected";
   createdAt?: string;
   commissionAmount?: number;
+  cashbackAmount?: number; // include cashback for fallback
 };
 type OrderDb = Omit<Order, "id">;
 type CommissionEvent = { referrerId: string; amount: number; timestamp: number };
 type CommissionDb = { referrerId?: string; amount?: number | string; timestamp?: number | string };
+type CashbackEvent = { userId: string; amount: number; timestamp: number };
+type CashbackDb = { userId?: string; amount?: number | string; timestamp?: number | string };
 type LeaderboardEntry = { user: User; earnings: number };
 
 const startOfToday = () => {
@@ -47,13 +50,21 @@ export default function LeaderboardPage() {
   const [packages, setPackages] = useState<Record<string, PackageRec>>({});
   const [orders, setOrders] = useState<Order[]>([]);
   const [commissions, setCommissions] = useState<CommissionEvent[]>([]);
-  const [loaded, setLoaded] = useState({ users: false, packages: false, orders: false, commissions: false });
+  const [cashbacks, setCashbacks] = useState<CashbackEvent[]>([]);
+  const [loaded, setLoaded] = useState({
+    users: false,
+    packages: false,
+    orders: false,
+    commissions: false,
+    cashbacks: false,
+  });
 
   useEffect(() => {
     const usersRef = ref(database, "users");
     const pkRef = ref(database, "packages");
     const ordersRef = ref(database, "orders");
     const comRef = ref(database, "commissions");
+    const cbRef = ref(database, "cashbacks");
 
     const unUsers = onValue(usersRef, (snap) => {
       const v = (snap.val() || {}) as Record<string, RawUser>;
@@ -88,6 +99,7 @@ export default function LeaderboardPage() {
         status: o.status,
         createdAt: o.createdAt,
         commissionAmount: typeof o.commissionAmount === "number" ? o.commissionAmount : undefined,
+        cashbackAmount: typeof o.cashbackAmount === "number" ? o.cashbackAmount : undefined,
       }));
       setOrders(list);
       setLoaded((s) => ({ ...s, orders: true }));
@@ -114,15 +126,38 @@ export default function LeaderboardPage() {
       () => setLoaded((s) => ({ ...s, commissions: true }))
     );
 
+    const unCb = onValue(
+      cbRef,
+      (snap) => {
+        const v = (snap.val() || {}) as Record<string, CashbackDb>;
+        const list: (CashbackEvent | null)[] = Object.values(v).map((c) => {
+          const amount =
+            typeof c.amount === "number" ? c.amount :
+            typeof c.amount === "string" ? parseFloat(c.amount) : NaN;
+          const ts =
+            typeof c.timestamp === "number" ? c.timestamp :
+            typeof c.timestamp === "string" ? Date.parse(c.timestamp) : NaN;
+          return c && c.userId && isFinite(amount) && isFinite(ts)
+            ? { userId: c.userId, amount, timestamp: ts }
+            : null;
+        });
+        setCashbacks(list.filter((x): x is CashbackEvent => x !== null));
+        setLoaded((s) => ({ ...s, cashbacks: true }));
+      },
+      () => setLoaded((s) => ({ ...s, cashbacks: true }))
+    );
+
     return () => {
       unUsers();
       unPk();
       unOrders();
       unCom();
+      unCb();
     };
   }, []);
 
-  const loading = !loaded.users || !loaded.packages || !loaded.orders || !loaded.commissions;
+  const loading =
+    !loaded.users || !loaded.packages || !loaded.orders || !loaded.commissions || !loaded.cashbacks;
 
   // Prefer /commissions; fallback to deriving from orders
   const commissionStream: CommissionEvent[] = useMemo(() => {
@@ -138,7 +173,10 @@ export default function LeaderboardPage() {
       if (!users[o.referrerId] || !users[o.referrerId].name) continue;
 
       const price = o.courseId ? (packages[o.courseId!]?.price || 0) : 0;
-      const amount = typeof o.commissionAmount === "number" ? o.commissionAmount : Math.floor((price || 0) * 0.58);
+      const amount =
+        typeof o.commissionAmount === "number"
+          ? o.commissionAmount
+          : Math.floor((price || 0) * 0.58);
       if (!isFinite(amount) || amount <= 0) continue;
       const ts = Date.parse(o.createdAt);
       if (!isFinite(ts)) continue;
@@ -147,15 +185,44 @@ export default function LeaderboardPage() {
     return derived;
   }, [loading, commissions, orders, packages, users]);
 
+  // Cashbacks: Prefer /cashbacks; fallback to deriving from orders
+  const cashbackStream: CashbackEvent[] = useMemo(() => {
+    if (!loading && cashbacks.length > 0) {
+      return cashbacks.filter((c) => users[c.userId] && !!users[c.userId].name);
+    }
+    const derived: CashbackEvent[] = [];
+    for (const o of orders) {
+      if (o.status !== "Completed" || !o.userId || !o.createdAt) continue;
+      if (!users[o.userId] || !users[o.userId].name) continue;
+      const amount = typeof o.cashbackAmount === "number" ? o.cashbackAmount : 0;
+      if (!isFinite(amount) || amount <= 0) continue;
+      const ts = Date.parse(o.createdAt);
+      if (!isFinite(ts)) continue;
+      derived.push({ userId: o.userId, amount, timestamp: ts });
+    }
+    return derived;
+  }, [loading, cashbacks, orders, users]);
+
+  // Combine both streams as earnings
+  // Normalize to a common shape: { uid, amount, timestamp }
+  const earningsStream = useMemo(() => {
+    const asEarnings = [
+      ...commissionStream.map((c) => ({ uid: c.referrerId, amount: c.amount, timestamp: c.timestamp })),
+      ...cashbackStream.map((c) => ({ uid: c.userId, amount: c.amount, timestamp: c.timestamp })),
+    ];
+    // Filter to known, named users (safety)
+    return asEarnings.filter((e) => users[e.uid] && !!users[e.uid].name);
+  }, [commissionStream, cashbackStream, users]);
+
   const leaderboards = useMemo(() => {
     const calc = (fromTs?: number): LeaderboardEntry[] => {
-      const sumByReferrer = new Map<string, number>();
-      for (const c of commissionStream) {
-        if (fromTs && c.timestamp < fromTs) continue;
-        sumByReferrer.set(c.referrerId, (sumByReferrer.get(c.referrerId) || 0) + c.amount);
+      const sumByUser = new Map<string, number>();
+      for (const e of earningsStream) {
+        if (fromTs && e.timestamp < fromTs) continue;
+        sumByUser.set(e.uid, (sumByUser.get(e.uid) || 0) + e.amount);
       }
       const entries: LeaderboardEntry[] = [];
-      for (const [uid, earnings] of sumByReferrer) {
+      for (const [uid, earnings] of sumByUser) {
         const u = users[uid];
         // Only include if user exists with a valid name (deleted users not included)
         if (!u || !u.name) continue;
@@ -170,7 +237,7 @@ export default function LeaderboardPage() {
       monthly: calc(startOfMonth()),
       lifetime: calc(undefined),
     };
-  }, [commissionStream, users]);
+  }, [earningsStream, users]);
 
   const top3Lifetime = leaderboards.lifetime.slice(0, 3);
   const maxLifetime = Math.max(1, ...top3Lifetime.map((e) => e.earnings));
