@@ -10,7 +10,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage
 import { onAuthStateChanged, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 
-// Types
+/* ================== Types ================== */
 type SpecialAccess = {
   packageId: string;
   commissionPercent?: number; // e.g., 65 means 65%
@@ -27,7 +27,8 @@ type UserProfile = {
   balance: number;
   totalEarnings: number;
   imageUrl?: string;
-  courseId: string;
+  courseId: string; // legacy single course
+  ownedCourseIds?: Record<string, boolean>; // multi-course
   progress: number;
   status?: string;
   specialAccess?: SpecialAccess | null;
@@ -64,7 +65,7 @@ type OrdersDbRec = {
 };
 type OrdersDb = Record<string, OrdersDbRec | undefined>;
 
-// Date helpers (no mutation bugs)
+/* ================== Date helpers ================== */
 const startOfToday = () => {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -83,7 +84,7 @@ const startOfMonth = () => {
   return d.getTime();
 };
 
-// Normalize a /commissions event
+/* ================== Commission helpers ================== */
 function normalizeCommissionFromCommissions(raw: CommissionsDbRec | undefined): CommissionEvent | null {
   if (!raw) return null;
   const amount =
@@ -96,8 +97,6 @@ function normalizeCommissionFromCommissions(raw: CommissionsDbRec | undefined): 
   return { amount, timestamp: ts, referrerId: raw.referrerId, orderId: raw.orderId };
 }
 
-// Derive commission from an order if completed (fallback when /commissions missing)
-// Uses special % if provided for current user; else uses package's default commissionPercent (fallback 58%)
 function deriveCommissionFromOrder(
   o: Order,
   packagesMap: Record<string, CoursePackage>,
@@ -107,29 +106,26 @@ function deriveCommissionFromOrder(
   const ts = Date.parse(o.createdAt);
   if (!isFinite(ts)) return null;
 
-  // If commissionAmount already on order, prefer it
   if (typeof o.commissionAmount === "number" && isFinite(o.commissionAmount) && o.commissionAmount > 0) {
     return { amount: o.commissionAmount, timestamp: ts, referrerId: o.referrerId, orderId: o.id };
   }
 
-  // Else derive from package price and percent
   if (!o.courseId || !packagesMap[o.courseId]?.price) return null;
   const pkg = packagesMap[o.courseId]!;
   const defaultPct = typeof pkg.commissionPercent === "number" ? pkg.commissionPercent : 58;
   const pct = typeof referrerSpecialPercent === "number" ? referrerSpecialPercent : defaultPct;
   const amount = Math.floor((pkg.price || 0) * (pct / 100));
-
   if (!isFinite(amount) || amount <= 0) return null;
   return { amount, timestamp: ts, referrerId: o.referrerId, orderId: o.id };
 }
 
+/* ================== Page ================== */
 export default function DashboardPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [enrolledPackage, setEnrolledPackage] = useState<CoursePackage | null>(null);
+  const [effectiveCourse, setEffectiveCourse] = useState<CoursePackage | null>(null);
   const [monthlyTarget, setMonthlyTarget] = useState<Target | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Data sources for earnings
   const [commissionEventsFromDb, setCommissionEventsFromDb] = useState<CommissionEvent[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [packagesMap, setPackagesMap] = useState<Record<string, CoursePackage>>({});
@@ -148,7 +144,7 @@ export default function DashboardPage() {
         return;
       }
 
-      // Load public packages once (default commission% resides here)
+      // Load courses (packages) map
       const pkSnap = await get(dbRef(database, "packages"));
       const pkVal = (pkSnap.val() as PackagesDb) || {};
       const pkMap: Record<string, CoursePackage> = {};
@@ -158,25 +154,26 @@ export default function DashboardPage() {
       });
       setPackagesMap(pkMap);
 
-      // User: also respects specialAccess from both admin/courses and admin/orders (active/enabled)
+      // User
       const userRef = dbRef(database, `users/${currentUser.uid}`);
       unUser = onValue(userRef, async (snapshot) => {
         if (snapshot.exists()) {
-          const userData = snapshot.val() as Partial<UserProfile> & { specialAccess?: SpecialAccess };
-          const specialAccess = userData.specialAccess || null;
+          const ud = snapshot.val() as Partial<UserProfile> & { specialAccess?: SpecialAccess; ownedCourseIds?: Record<string, boolean> };
+          const specialAccess = ud.specialAccess || null;
           const specialActive = !!(specialAccess && (specialAccess.active ?? specialAccess.enabled ?? true) && specialAccess.packageId);
 
           const profile: UserProfile = {
             id: currentUser.uid,
-            name: userData.name || "",
-            email: userData.email || "",
-            phone: userData.phone || "",
-            balance: userData.balance || 0,
-            totalEarnings: userData.totalEarnings || 0,
-            imageUrl: userData.imageUrl,
-            courseId: userData.courseId || "",
-            progress: userData.progress || 0,
-            status: userData.status,
+            name: ud.name || "",
+            email: ud.email || "",
+            phone: ud.phone || "",
+            balance: ud.balance || 0,
+            totalEarnings: ud.totalEarnings || 0,
+            imageUrl: ud.imageUrl,
+            courseId: ud.courseId || "",
+            ownedCourseIds: ud.ownedCourseIds || undefined,
+            progress: ud.progress || 0,
+            status: ud.status,
             specialAccess: specialAccess ? {
               packageId: specialAccess.packageId,
               commissionPercent: specialAccess.commissionPercent,
@@ -187,35 +184,42 @@ export default function DashboardPage() {
           };
           setUser(profile);
 
-          // Pick effective package: specialAccess.packageId takes priority (might live under specialPackages or packages)
-          const effectiveCourseId = specialActive ? specialAccess!.packageId : (profile.courseId || "");
-          if (effectiveCourseId) {
-            // First try public packages
-            let pkgSnap = await get(dbRef(database, `packages/${effectiveCourseId}`));
+          // Effective "primary" course for the header badge (special takes priority, else the first owned, else legacy)
+          let effectiveId: string | null = null;
+          if (specialActive && specialAccess!.packageId) {
+            effectiveId = specialAccess!.packageId;
+          } else if (profile.ownedCourseIds) {
+            const firstOwned = Object.keys(profile.ownedCourseIds).find((k) => profile.ownedCourseIds?.[k]);
+            effectiveId = firstOwned || null;
+          } else if (profile.courseId) {
+            effectiveId = profile.courseId;
+          }
+
+          if (effectiveId) {
+            let pkgSnap = await get(dbRef(database, `packages/${effectiveId}`));
             if (pkgSnap.exists()) {
               const pv = pkgSnap.val() as Omit<CoursePackage, "id">;
-              setEnrolledPackage({ id: effectiveCourseId, ...pv });
+              setEffectiveCourse({ id: effectiveId, ...pv });
             } else {
-              // Fallback: specialPackages
-              pkgSnap = await get(dbRef(database, `specialPackages/${effectiveCourseId}`));
+              pkgSnap = await get(dbRef(database, `specialPackages/${effectiveId}`));
               if (pkgSnap.exists()) {
                 const pv = pkgSnap.val() as Omit<CoursePackage, "id">;
-                setEnrolledPackage({ id: effectiveCourseId, ...pv });
+                setEffectiveCourse({ id: effectiveId, ...pv });
               } else {
-                setEnrolledPackage(null);
+                setEffectiveCourse(null);
               }
             }
           } else {
-            setEnrolledPackage(null);
+            setEffectiveCourse(null);
           }
         } else {
           setUser(null);
-          setEnrolledPackage(null);
+          setEffectiveCourse(null);
         }
         setLoading(false);
       });
 
-      // Commissions (preferred source)
+      // Commissions
       const commissionsRef = dbRef(database, "commissions");
       unCommissions = onValue(
         commissionsRef,
@@ -232,7 +236,7 @@ export default function DashboardPage() {
         () => setCommissionEventsFromDb([])
       );
 
-      // Orders (fallback source)
+      // Orders
       const ordersRef = dbRef(database, "orders");
       unOrders = onValue(
         ordersRef,
@@ -286,7 +290,33 @@ export default function DashboardPage() {
     };
   }, []);
 
-  // Build the final commission stream for this user (prefers commissions node)
+  /* ================== Multi-course names ================== */
+  const ownedCourseNames = useMemo(() => {
+    if (!user) return [];
+    const ids = new Set<string>();
+    if (user.courseId) ids.add(user.courseId); // legacy
+    if (user.ownedCourseIds) {
+      Object.entries(user.ownedCourseIds).forEach(([cid, enabled]) => {
+        if (enabled) ids.add(cid);
+      });
+    }
+    const names: string[] = [];
+    ids.forEach((cid) => {
+      const p = packagesMap[cid];
+      if (p?.name) names.push(p.name);
+    });
+    // dedupe + sort
+    const seen = new Set<string>();
+    const unique = names.filter((n) => {
+      if (seen.has(n)) return false;
+      seen.add(n);
+      return true;
+    });
+    unique.sort((a, b) => a.localeCompare(b));
+    return unique;
+  }, [user, packagesMap]);
+
+  /* ================== Earnings assembly ================== */
   const commissionEvents: CommissionEvent[] = useMemo(() => {
     if (commissionEventsFromDb.length > 0) return commissionEventsFromDb;
     if (!user) return [];
@@ -301,7 +331,6 @@ export default function DashboardPage() {
     return derived;
   }, [commissionEventsFromDb, orders, packagesMap, user]);
 
-  // Time-based totals
   const timeBasedEarnings = useMemo(() => {
     const today = startOfToday();
     const week = startOfWeek();
@@ -318,7 +347,6 @@ export default function DashboardPage() {
     );
   }, [commissionEvents]);
 
-  // Last 7 days chart
   const chartData = useMemo(() => {
     const days = Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
@@ -348,6 +376,7 @@ export default function DashboardPage() {
 
   const isTargetCompleted = monthlyProgress >= 100;
 
+  /* ================== Profile updates ================== */
   const handleUpdateProfile = async (data: { name: string; phone: string }, imageFile: File | null) => {
     if (!user) return;
     try {
@@ -401,13 +430,14 @@ export default function DashboardPage() {
   );
   const whatsappUrl = `https://api.whatsapp.com/send/?phone=9779705726179&text=${whatsappMessage}&type=phone_number&app_absent=0`;
 
-  // Special access info
   const isOnSpecial = Boolean(user.specialAccess?.packageId && (user.specialAccess.active ?? user.specialAccess.enabled ?? true));
   const specialPct = user.specialAccess?.commissionPercent ?? 58;
 
+  /* ================== UI ================== */
   return (
     <>
       <div className="space-y-8">
+        {/* Header with profile + chips, and inline course names (no separate section) */}
         <header className="flex flex-col sm:flex-row items-center gap-6 rounded-lg border bg-white p-6 shadow-sm">
           <div className="relative h-24 w-24 sm:h-28 sm:w-28 flex-shrink-0">
             {user.imageUrl ? (
@@ -418,21 +448,38 @@ export default function DashboardPage() {
               </div>
             )}
           </div>
-          <div className="text-center sm:text-left">
+
+          <div className="flex-1 text-center sm:text-left">
             <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">{user.name}</h1>
             <p className="mt-1 text-base text-slate-500">{user.phone}</p>
 
-            {enrolledPackage && (
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-sm font-semibold text-sky-800">
-                  <StarIcon className="mr-1.5 h-4 w-4 text-sky-500" />
-                  {isOnSpecial ? `Special: ${enrolledPackage.name}` : enrolledPackage.name}
+            <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
+              {isOnSpecial && (
+                <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
+                  Special Access • {specialPct}% commission
                 </span>
-                {isOnSpecial && (
-                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-800">
-                    Commission: {specialPct}%
+              )}
+              {effectiveCourse && (
+                <span className="inline-flex items-center rounded-full bg-sky-100 px-3 py-1 text-xs font-semibold text-sky-800">
+                  Primary: {effectiveCourse.name}
+                </span>
+              )}
+              <Link
+                href="/user/upgrade-course"
+                className="inline-flex items-center rounded-full bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
+              >
+                Buy More Courses
+              </Link>
+            </div>
+
+            {/* Show owned course names inline as chips (no separate section) */}
+            {ownedCourseNames.length > 0 && (
+              <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                {ownedCourseNames.map((name) => (
+                  <span key={name} className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold text-slate-800 ring-1 ring-slate-200">
+                    {name}
                   </span>
-                )}
+                ))}
               </div>
             )}
 
@@ -445,6 +492,7 @@ export default function DashboardPage() {
           </div>
         </header>
 
+        {/* Stats */}
         <section className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             title="Today&apos;s Earnings"
@@ -472,6 +520,7 @@ export default function DashboardPage() {
           />
         </section>
 
+        {/* Monthly Target */}
         {monthlyTarget && monthlyTarget.goalAmount > 0 && (
           <section className="rounded-lg border bg-white p-6 shadow-sm">
             <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-4">
@@ -481,7 +530,11 @@ export default function DashboardPage() {
                   Reach the goal to win a <span className="font-bold text-slate-700">{monthlyTarget.prize}</span>!
                 </p>
 
-                <PrizeStatusChecker userId={user.id} currentMonth={new Date().getMonth()} currentYear={new Date().getFullYear()} />
+                <PrizeStatusChecker
+                  userId={user.id}
+                  currentMonth={new Date().getMonth()}
+                  currentYear={new Date().getFullYear()}
+                />
 
                 <div className="mt-4 max-w-sm">
                   <div className="flex justify-between text-sm font-semibold text-slate-600 mb-1">
@@ -491,7 +544,7 @@ export default function DashboardPage() {
                   <div className="w-full bg-slate-200 rounded-full h-4 overflow-hidden">
                     <div
                       className={`h-4 rounded-full transition-all duration-500 ${isTargetCompleted ? "bg-gradient-to-r from-green-500 to-emerald-400" : "bg-gradient-to-r from-sky-500 to-cyan-400"}`}
-                      style={{ width: `${monthlyProgress}%` }}
+                      style={{ width: `${Math.min(100, monthlyProgress)}%` }}
                     />
                   </div>
                   <p className="text-xs text-slate-500 mt-2">
@@ -507,15 +560,17 @@ export default function DashboardPage() {
                   currentYear={new Date().getFullYear()}
                 />
               </div>
+
+              {monthlyTarget.imageUrl && (
+                <div className="relative h-24 w-24 flex-shrink-0 self-center">
+                  <Image src={monthlyTarget.imageUrl} alt={monthlyTarget.prize} fill className="rounded-md object-contain" />
+                </div>
+              )}
             </div>
-            {monthlyTarget.imageUrl && (
-              <div className="relative h-24 w-24 flex-shrink-0 self-center">
-                <Image src={monthlyTarget.imageUrl} alt={monthlyTarget.prize} fill className="rounded-md object-contain" />
-              </div>
-            )}
           </section>
         )}
 
+        {/* Earnings Trend */}
         <section className="rounded-lg border bg-white p-6 shadow-sm">
           <h2 className="text-lg font-semibold text-slate-800 mb-4">Earnings Trend (Last 7 Days)</h2>
           <div className="h-72 w-full">
@@ -532,18 +587,27 @@ export default function DashboardPage() {
               </LineChart>
             </ResponsiveContainer>
           </div>
-          {commissionEvents.length === 0 && <p className="text-center text-sm text-slate-500 mt-4">No commission data available yet. Start referring to see your earnings!</p>}
+          {commissionEvents.length === 0 && (
+            <p className="text-center text-sm text-slate-500 mt-4">
+              No commission data available yet. Start referring to see your earnings!
+            </p>
+          )}
         </section>
       </div>
 
       {isEditModalOpen && user && (
-        <EditProfileModal user={user} onClose={() => setIsEditModalOpen(false)} onSave={handleUpdateProfile} onChangePassword={handleChangePassword} />
+        <EditProfileModal
+          user={user}
+          onClose={() => setIsEditModalOpen(false)}
+          onSave={handleUpdateProfile}
+          onChangePassword={handleChangePassword}
+        />
       )}
     </>
   );
 }
 
-// Prize Status Checker Component
+/* ================== Prize helpers ================== */
 function PrizeStatusChecker({ userId, currentMonth, currentYear }: { userId: string; currentMonth: number; currentYear: number }) {
   const [prizeCollected, setPrizeCollected] = useState<boolean>(false);
 
@@ -568,7 +632,6 @@ function PrizeStatusChecker({ userId, currentMonth, currentYear }: { userId: str
   return null;
 }
 
-// Prize Button Component
 function PrizeButton({
   isTargetCompleted,
   userId,
@@ -600,7 +663,7 @@ function PrizeButton({
     return (
       <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-gray-100 px-5 py-2.5 text-sm font-semibold text-gray-600">
         <svg className="h-5 w-5" fill="currentColor" viewBox="0 0 20 20">
-          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" />
         </svg>
         Prize Already Collected
       </div>
@@ -620,7 +683,7 @@ function PrizeButton({
   );
 }
 
-// Edit profile modal
+/* ================== Edit Profile ================== */
 function EditProfileModal({
   user,
   onClose,
@@ -697,7 +760,10 @@ function EditProfileModal({
                 </div>
               )}
             </div>
-            <label htmlFor="picture-update" className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+            <label
+              htmlFor="picture-update"
+              className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+            >
               <span>Change Picture</span>
               <input id="picture-update" type="file" className="sr-only" accept="image/*" onChange={handlePictureChange} />
             </label>
@@ -728,11 +794,10 @@ function EditProfileModal({
         </form>
       </div>
     </div>
-    );
-  
+  );
 }
 
-// Small UI bits
+/* ================== UI bits ================== */
 function MoneyCounter({ value, prefix = "Rs ", duration = 900 }: { value: number; prefix?: string; duration?: number }) {
   const [display, setDisplay] = useState(0);
   const prev = useRef(0);
@@ -796,6 +861,7 @@ function InputField({ id, label, ...props }: { id: string; label: string } & Inp
   );
 }
 
+/* ================== Icons ================== */
 function CloseIcon() {
   return (
     <svg className="h-5 w-5 text-slate-500" viewBox="0 0 20 20" fill="currentColor">
@@ -811,7 +877,7 @@ function GiftIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-const iconProps = { className: "h-full w-full", strokeWidth: "1" };
+const iconProps = { className: "h-full w-full", strokeWidth: "1" } as const;
 function TrophyIcon() {
   return (
     <svg {...iconProps} fill="none" viewBox="0 0 24 24" stroke="currentColor">

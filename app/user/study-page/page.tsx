@@ -1,316 +1,761 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { database, auth } from "@/lib/firebase";
-import { ref as dbRef, get, onValue } from "firebase/database";
+import { ref as dbRef, get, onValue, set } from "firebase/database";
 import type { SVGProps } from "react";
 
-// Types
+/* ================== Types ================== */
 type Video = { id: string; title: string; url: string };
-type Course = { id: string; title: string; videos?: { [key: string]: Omit<Video, "id"> } };
-type Package = { id: string; name: string; imageUrl?: string; courseIds?: { [key: string]: boolean } };
+type VideosMap = { [key: string]: Omit<Video, "id"> };
+type Course = { id: string; title: string; videos?: VideosMap };
+type Package = {
+  id: string;
+  name: string;
+  imageUrl?: string;
+  courseIds?: { [key: string]: boolean };
+};
 type PackagesDb = Record<string, Omit<Package, "id"> | undefined>;
+type CoursesDb = Record<string, Omit<Course, "id"> | undefined>;
 type SpecialAccess = { active?: boolean; enabled?: boolean; packageId?: string; commissionPercent?: number };
 
+type UserNode = {
+  name?: string;
+  email?: string;
+  phone?: string;
+  ownedCourseIds?: Record<string, boolean>;
+  courseId?: string; // legacy
+  specialAccess?: SpecialAccess | null;
+  progress?: Record<string, Record<string, boolean>>;
+  certificates?: Record<
+    string,
+    {
+      certificateId: string;
+      courseTitle: string;
+      issuedAt: string;
+    }
+  >;
+};
+
+/* ================== Helpers ================== */
 function getYouTubeId(url: string) {
   try {
     const u = new URL(url);
     if (u.hostname === "youtu.be") return u.pathname.slice(1);
     if (u.hostname.includes("youtube.com")) return u.searchParams.get("v");
-  } catch {
-    // ignore invalid URL
-  }
+  } catch {}
   return null;
 }
 
+declare global {
+  interface Window {
+    html2canvas?: (el: HTMLElement, opts?: any) => Promise<HTMLCanvasElement>;
+  }
+}
+
+async function loadScript(src: string) {
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${src}"]`);
+    if (existing) return resolve();
+    const s = document.createElement("script");
+    s.src = src;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error("Failed to load script: " + src));
+    document.head.appendChild(s);
+  });
+}
+
+// Allow DOM to paint before capture
+function waitForNextFrame() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+// Ensure all images inside a node are loaded to avoid blank captures
+async function ensureImagesLoaded(root: HTMLElement) {
+  const imgs = Array.from(root.querySelectorAll("img"));
+  await Promise.all(
+    imgs.map((img) => {
+      if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+      return new Promise<void>((res) => {
+        const done = () => {
+          img.removeEventListener("load", done);
+          img.removeEventListener("error", done);
+          res();
+        };
+        img.addEventListener("load", done);
+        img.addEventListener("error", done);
+      });
+    })
+  );
+}
+
+/* ================== Component ================== */
 export default function StudyPage() {
-  const [enrolledPackage, setEnrolledPackage] = useState<Package | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [userName, setUserName] = useState("Student");
+  const [userEmail, setUserEmail] = useState<string | undefined>(undefined);
+  const [userPhone, setUserPhone] = useState<string | undefined>(undefined);
+
   const [specialAccess, setSpecialAccess] = useState<SpecialAccess | null>(null);
-  const [specialPackage, setSpecialPackage] = useState<Package | null>(null);
-  const [courses, setCourses] = useState<Course[]>([]);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
+  const [ownedPackageIds, setOwnedPackageIds] = useState<string[]>([]);
+  const [legacyPackageId, setLegacyPackageId] = useState<string | null>(null);
+
+  const [packagesMap, setPackagesMap] = useState<Record<string, Package>>({});
+  const [coursesMap, setCoursesMap] = useState<Record<string, Course>>({});
+
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
+  const [selectedSubCourseId, setSelectedSubCourseId] = useState<string | null>(null);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+
+  const [progress, setProgress] = useState<Record<string, Record<string, boolean>>>({});
+  const [certificates, setCertificates] = useState<UserNode["certificates"]>({});
   const [loading, setLoading] = useState(true);
 
+  const [showCertModal, setShowCertModal] = useState(false);
+  const certRef = useRef<HTMLDivElement | null>(null);
+
+  // Auth + live user node
   useEffect(() => {
-    const unsubAuth = auth.onAuthStateChanged(async (currentUser) => {
-      if (!currentUser) {
+    const unsub = auth.onAuthStateChanged(async (cu) => {
+      if (!cu) {
         setLoading(false);
         return;
       }
+      setUserId(cu.uid);
 
-      // Live listen to user node for special access and course changes
-      const userRef = dbRef(database, `users/${currentUser.uid}`);
-      const unsubUser = onValue(
+      const userRef = dbRef(database, `users/${cu.uid}`);
+      const off = onValue(
         userRef,
         async (snap) => {
-          const userVal = snap.val() || {};
-          const userCourseId: string | undefined = userVal?.courseId || undefined;
-          const userSpecial: SpecialAccess | null = userVal?.specialAccess || null;
-
-          setSpecialAccess(userSpecial);
-
-          // Determine if special access is active.
-          // It's active if `active` is true OR `enabled` is true (for legacy compatibility) AND a `packageId` exists.
-          const isSpecialActive = !!(
-            userSpecial &&
-            (userSpecial.active ?? userSpecial.enabled) &&
-            userSpecial.packageId
-          );
-
-          try {
-            setLoading(true);
-
-            if (isSpecialActive) {
-              // Load and display all courses for special access.
-              const coursesSnap = await get(dbRef(database, "courses"));
-              const coursesObj = (coursesSnap.val() || {}) as Record<string, Omit<Course, "id">>;
-              const allCourses: Course[] = Object.entries(coursesObj).map(([id, v]) => ({ id, ...v }));
-              setCourses(allCourses);
-
-              // Fetch the special package details to display its name.
-              // It might be in /packages or /specialPackages. Try /packages first.
-              const specialPkgSnap = await get(dbRef(database, `packages/${userSpecial!.packageId}`));
-              if (specialPkgSnap.exists()) {
-                const pv = specialPkgSnap.val() as Omit<Package, "id">;
-                setSpecialPackage({ id: userSpecial!.packageId!, ...pv });
-              } else {
-                // Fallback to /specialPackages if not found in /packages.
-                const fallbackSnap = await get(dbRef(database, `specialPackages/${userSpecial!.packageId}`));
-                if (fallbackSnap.exists()) {
-                  const pv = fallbackSnap.val() as Omit<Package, "id">;
-                  setSpecialPackage({ id: userSpecial!.packageId!, ...pv });
-                } else {
-                  setSpecialPackage(null);
-                }
-              }
-
-              // The enrolled package is the special package when active.
-              setEnrolledPackage(specialPackage);
-
-              // Preselect the first course and its first video.
-              if (allCourses.length > 0) {
-                const firstCourse = allCourses[0];
-                setSelectedCourse(firstCourse);
-                const firstVideoKey = Object.keys(firstCourse.videos || {})[0];
-                if (firstVideoKey) {
-                  const v = firstCourse.videos![firstVideoKey];
-                  setSelectedVideo({ id: firstVideoKey, title: v.title, url: v.url });
-                } else {
-                  setSelectedVideo(null);
-                }
-              } else {
-                setSelectedCourse(null);
-                setSelectedVideo(null);
-              }
-            } else if (userCourseId) {
-              // Normal path: show courses from the user's purchased package.
-              const pkgSnap = await get(dbRef(database, `packages/${userCourseId}`));
-              if (!pkgSnap.exists()) {
-                setEnrolledPackage(null);
-                setCourses([]);
-                setSelectedCourse(null);
-                setSelectedVideo(null);
-                setSpecialPackage(null);
-                setLoading(false);
-                return;
-              }
-
-              const pkgVal = pkgSnap.val() as Omit<Package, "id">;
-              const pkg: Package = { id: userCourseId, ...pkgVal };
-              setEnrolledPackage(pkg);
-              setSpecialPackage(null);
-
-              const courseIds = Object.keys(pkg.courseIds || {});
-              if (courseIds.length === 0) {
-                setCourses([]);
-                setSelectedCourse(null);
-                setSelectedVideo(null);
-                setLoading(false);
-                return;
-              }
-
-              const courseSnaps = await Promise.all(
-                courseIds.map((cid) => get(dbRef(database, `courses/${cid}`)))
-              );
-
-              const coursesArray: Course[] = courseSnaps
-                .filter((s) => s.exists())
-                .map((s, i) => {
-                  const id = courseIds[i];
-                  return { id, ...(s.val() as Omit<Course, "id">) };
-                });
-
-              setCourses(coursesArray);
-
-              // Preselect the first course and its first video.
-              if (coursesArray.length > 0) {
-                const firstCourse = coursesArray[0];
-                setSelectedCourse(firstCourse);
-                const firstVideoKey = Object.keys(firstCourse.videos || {})[0];
-                if (firstVideoKey) {
-                  const v = firstCourse.videos![firstVideoKey];
-                  setSelectedVideo({ id: firstVideoKey, title: v.title, url: v.url });
-                } else {
-                  setSelectedVideo(null);
-                }
-              } else {
-                setSelectedCourse(null);
-                setSelectedVideo(null);
-              }
-            } else {
-              // No package and no special access.
-              setEnrolledPackage(null);
-              setSpecialPackage(null);
-              setCourses([]);
-              setSelectedCourse(null);
-              setSelectedVideo(null);
-            }
-          } catch (e) {
-            console.error("Failed to load study content:", e);
-          } finally {
-            setLoading(false);
-          }
+          const val = (snap.val() || {}) as UserNode;
+          setUserName(val?.name || cu.email || "Student");
+          setUserEmail(val?.email || cu.email || undefined);
+          setUserPhone(val?.phone || undefined);
+          setSpecialAccess(val?.specialAccess || null);
+          setProgress(val?.progress || {});
+          setCertificates(val?.certificates || {});
+          const owned = Object.entries(val?.ownedCourseIds || {})
+            .filter(([, v]) => !!v)
+            .map(([id]) => id);
+          setOwnedPackageIds(owned);
+          setLegacyPackageId(val?.courseId || null);
         },
         () => setLoading(false)
       );
 
-      return () => unsubUser();
+      return () => off();
     });
-
-    return () => unsubAuth();
+    return () => unsub();
   }, []);
 
-  const currentVideoId = useMemo(
-    () => (selectedVideo ? getYouTubeId(selectedVideo.url) : null),
-    [selectedVideo]
-  );
+  // Load all packages and sub-courses once
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [pSnap, cSnap] = await Promise.all([get(dbRef(database, "packages")), get(dbRef(database, "courses"))]);
+        const pVal = (pSnap.val() as PackagesDb) || {};
+        const cVal = (cSnap.val() as CoursesDb) || {};
+
+        const pMap: Record<string, Package> = {};
+        Object.entries(pVal).forEach(([id, v]) => {
+          if (!v) return;
+          pMap[id] = { id, ...v, name: v.name || "Untitled Course" };
+        });
+
+        const cMap: Record<string, Course> = {};
+        Object.entries(cVal).forEach(([id, v]) => {
+          if (!v) return;
+          cMap[id] = { id, title: v.title || "Untitled Sub-course", videos: v.videos || {} };
+        });
+
+        setPackagesMap(pMap);
+        setCoursesMap(cMap);
+      } catch (e) {
+        console.error("Failed to load packages/courses:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
+
+  // Build accessible package ids
+  const accessiblePackageIds = useMemo(() => {
+    const specialActive = !!(specialAccess && (specialAccess.active ?? specialAccess.enabled) && specialAccess.packageId);
+    if (specialActive) {
+      return Object.keys(packagesMap);
+    }
+    const ids = new Set<string>(ownedPackageIds);
+    if (legacyPackageId) ids.add(legacyPackageId);
+    return Array.from(ids);
+  }, [specialAccess, packagesMap, ownedPackageIds, legacyPackageId]);
+
+  // Ensure selection is valid
+  useEffect(() => {
+    if (accessiblePackageIds.length === 0) {
+      setSelectedPackageId(null);
+      setSelectedSubCourseId(null);
+      setSelectedVideo(null);
+      return;
+    }
+    setSelectedPackageId((prev) => (prev && accessiblePackageIds.includes(prev) ? prev : accessiblePackageIds[0] || null));
+  }, [accessiblePackageIds]);
+
+  // When package changes, set first sub-course and first video
+  useEffect(() => {
+    if (!selectedPackageId) {
+      setSelectedSubCourseId(null);
+      setSelectedVideo(null);
+      return;
+    }
+    const pkg = packagesMap[selectedPackageId];
+    const subIds = Object.keys(pkg?.courseIds || {});
+    if (subIds.length === 0) {
+      setSelectedSubCourseId(null);
+      setSelectedVideo(null);
+      return;
+    }
+    setSelectedSubCourseId((prev) => (prev && subIds.includes(prev) ? prev : subIds[0]));
+  }, [selectedPackageId, packagesMap]);
+
+  useEffect(() => {
+    if (!selectedSubCourseId) {
+      setSelectedVideo(null);
+      return;
+    }
+    const sc = coursesMap[selectedSubCourseId];
+    const vids = Object.entries(sc?.videos || {});
+    if (vids.length === 0) {
+      setSelectedVideo(null);
+      return;
+    }
+    const [id, v] = vids[0];
+    setSelectedVideo({ id, title: v.title, url: v.url });
+  }, [selectedSubCourseId, coursesMap]);
+
+  // Derived data
+  const currentVideoId = useMemo(() => (selectedVideo ? getYouTubeId(selectedVideo.url) : null), [selectedVideo]);
+  const selectedPackage = useMemo(() => (selectedPackageId ? packagesMap[selectedPackageId] : null), [selectedPackageId, packagesMap]);
+  const selectedSubCourse = useMemo(() => (selectedSubCourseId ? coursesMap[selectedSubCourseId] : null), [selectedSubCourseId, coursesMap]);
+
+  const selectedSubCourseVideoList = useMemo(() => {
+    if (!selectedSubCourse?.videos) return [];
+    return Object.entries(selectedSubCourse.videos).map(([id, v]) => ({
+      id,
+      title: v.title,
+      url: v.url,
+    }));
+  }, [selectedSubCourse]);
+
+  // Package completion
+  const packageCompletion = useMemo(() => {
+    if (!selectedPackage) return { total: 0, done: 0, pct: 0, completed: false };
+    const subIds = Object.keys(selectedPackage.courseIds || {});
+    let total = 0;
+    let done = 0;
+    subIds.forEach((cid) => {
+      const vids = Object.keys(coursesMap[cid]?.videos || {});
+      total += vids.length;
+      const doneHere = Object.keys(progress[cid] || {}).filter((vid) => progress[cid]?.[vid]).length;
+      done += Math.min(doneHere, vids.length);
+    });
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    return { total, done, pct, completed: total > 0 && done >= total };
+  }, [selectedPackage, progress, coursesMap]);
+
+  const toggleVideoCompleted = async (subCourseId: string, videoId: string) => {
+    if (!userId) return;
+    const current = !!progress?.[subCourseId]?.[videoId];
+    try {
+      await set(dbRef(database, `users/${userId}/progress/${subCourseId}/${videoId}`), !current);
+    } catch (e) {
+      console.error("Failed to update progress:", e);
+    }
+  };
+
+  // Certificate download
+  const downloadCertificatePNG = async () => {
+    if (!certRef.current || !selectedPackage) return;
+    try {
+      if (!window.html2canvas) {
+        await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
+      }
+
+      // Make sure all images are loaded and DOM is painted
+      await ensureImagesLoaded(certRef.current);
+      await waitForNextFrame();
+
+      // Save cert record first
+      if (userId) {
+        const certId = `${selectedPackage.id}-${Date.now()}`;
+        await set(dbRef(database, `users/${userId}/certificates/${selectedPackage.id}`), {
+          certificateId: certId,
+          courseTitle: selectedPackage.name,
+          issuedAt: new Date().toISOString(),
+        });
+      }
+
+      const canvas = await window.html2canvas!(certRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+      });
+
+      const filename = `certificate-${selectedPackage.name.replace(/\s+/g, "-")}.png`;
+
+      if (canvas.toBlob) {
+        canvas.toBlob((blob) => {
+          if (!blob) {
+            // Fallback
+            const data = canvas.toDataURL("image/png");
+            const a = document.createElement("a");
+            a.href = data;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            return;
+          }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = filename; // Always set download; no unreachable else branch
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        }, "image/png");
+      } else {
+        const data = canvas.toDataURL("image/png");
+        const a = document.createElement("a");
+        a.href = data;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
+    } catch (e) {
+      console.error("Certificate download failed:", e);
+      alert("Could not generate certificate. Please try again.");
+    }
+  };
 
   if (loading) {
-    return <p className="p-8 text-center text-slate-500">Loading your courses...</p>;
+    return (
+      <div className="min-h-[60vh] grid place-items-center">
+        <div className="text-center">
+          <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-indigo-600 mx-auto" />
+          <p className="mt-3 text-slate-600">Loading your courses...</p>
+        </div>
+      </div>
+    );
   }
 
-  // If no package and no special access, prompt the user.
-  if (!enrolledPackage && !specialPackage) {
+  if (accessiblePackageIds.length === 0) {
     return (
-      <div className="text-center p-8">
-        <p className="text-slate-700">You are not enrolled in any course.</p>
-        <Link href="/packages" className="mt-4 inline-block rounded-md bg-sky-600 px-4 py-2 text-white">
-          Explore Packages
+      <div className="text-center p-8 max-w-lg mx-auto">
+        <h1 className="text-2xl font-bold text-slate-900">No Courses Available</h1>
+        <p className="mt-2 text-slate-600">It looks like you haven’t enrolled in any main course yet.</p>
+        <Link
+          href="/user/upgrade-course"
+          className="mt-4 inline-flex items-center rounded-full bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+        >
+          Browse Courses
         </Link>
       </div>
     );
   }
 
-  // Determine the header title and whether to show the special access badge.
-  const headerTitle = specialPackage
-    ? `All Courses (Special Access${specialPackage.name ? ` — ${specialPackage.name}` : ""})`
-    : enrolledPackage?.name || "My Courses";
-  const showSpecialBadge = !!specialPackage;
+  const brand = "Course Plex";
 
   return (
-    <div>
+    <div className="mx-auto max-w-7xl px-4 pb-16">
       {/* Header */}
       <header className="mb-6 flex flex-col gap-2">
-        <h1 className="text-3xl font-bold text-slate-900">{headerTitle}</h1>
-        {showSpecialBadge && (
-          <span className="inline-flex items-center gap-2 self-start rounded-full bg-fuchsia-100 px-3 py-1 text-sm font-semibold text-fuchsia-700">
-            <StarIcon className="h-4 w-4" />
-            Special Access Enabled
-          </span>
-        )}
+        <div className="inline-flex items-center gap-2 self-start rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700 ring-1 ring-indigo-200">
+          <SparkleIcon className="h-4 w-4" />
+          {brand} Study
+        </div>
+        <h1 className="text-3xl font-black text-slate-900 tracking-tight">Your Learning Space</h1>
+        <p className="text-slate-600">Welcome back, {userName.split(" ")[0]}! Choose a course, complete all content, and earn your certificate.</p>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Player + Now playing */}
-        <div className="lg:col-span-2">
-          <div className="aspect-video w-full rounded-lg overflow-hidden shadow-lg bg-black">
-            {currentVideoId ? (
+      {/* Layout */}
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        {/* Player + Info */}
+        <section className="lg:col-span-2">
+          <div className="relative aspect-video w-full overflow-hidden rounded-2xl border bg-slate-900 shadow-xl ring-1 ring-slate-200">
+            {selectedVideo && currentVideoId ? (
               <iframe
                 width="100%"
                 height="100%"
-                src={`https://www.youtube.com/embed/${currentVideoId}?autoplay=1`}
-                title={selectedVideo?.title || "Course video"}
+                src={`https://www.youtube.com/embed/${currentVideoId}?autoplay=1&rel=0&modestbranding=1`}
+                title={selectedVideo.title}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
-              ></iframe>
+              />
             ) : (
-              <div className="flex items-center justify-center h-full text-slate-400">Select a video to play</div>
+              <div className="grid h-full place-items-center text-slate-400">Select a video to play</div>
             )}
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
           </div>
-          <div className="mt-4">
-            <h2 className="text-2xl font-semibold text-slate-800">
-              {selectedVideo?.title || "No video selected"}
-            </h2>
-            <p className="text-slate-600 mt-1">Course: {selectedCourse?.title || "-"}</p>
-          </div>
-        </div>
 
-        {/* Courses + videos list */}
-        <div className="lg:col-span-1 space-y-6">
-          {courses.map((course) => (
-            <div key={course.id} className="rounded-lg border bg-white shadow-sm overflow-hidden">
-              <button
-                onClick={() => setSelectedCourse(course)}
-                className="w-full text-left p-4 bg-slate-50 border-b font-semibold text-slate-800"
-              >
-                {course.title}
-              </button>
-              <div className={`p-2 space-y-1 ${selectedCourse?.id === course.id ? "block" : "hidden"}`}>
-                {Object.entries(course.videos || {}).map(([id, video]) => (
+          <div className="mt-5 rounded-xl border bg-white p-4 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 line-clamp-2">
+                  {selectedVideo?.title || "No video selected"}
+                </h2>
+                <p className="text-sm text-slate-600 mt-0.5">
+                  Course: {selectedPackage?.name || "-"} • Sub-course: {selectedSubCourse?.title || "-"}
+                </p>
+              </div>
+              {selectedSubCourse && selectedVideo && (
+                <button
+                  onClick={() => toggleVideoCompleted(selectedSubCourse.id, selectedVideo.id)}
+                  className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-200"
+                >
+                  <CheckIcon className={`h-5 w-5 ${progress[selectedSubCourse.id]?.[selectedVideo.id] ? "text-emerald-600" : "text-slate-400"}`} />
+                  {progress[selectedSubCourse.id]?.[selectedVideo.id] ? "Completed" : "Mark Completed"}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Package certificate card */}
+          {selectedPackage && packageCompletion.completed && (
+            <div className="mt-6 overflow-hidden rounded-2xl border bg-gradient-to-br from-amber-50 via-white to-emerald-50 p-4 shadow-sm ring-1 ring-amber-200">
+              <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+                <div className="flex items-center gap-3">
+                  <AwardIcon className="h-8 w-8 text-amber-500" />
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900">Congratulations!</h3>
+                    <p className="text-sm text-slate-600">
+                      You’ve completed “{selectedPackage.name}”. Generate and download your certificate.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
                   <button
-                    key={id}
-                    onClick={() => setSelectedVideo({ id, ...video })}
-                    className={`w-full text-left flex items-center gap-3 p-2 rounded-md transition-colors text-sm ${
-                      selectedVideo?.id === id ? "bg-sky-100 text-sky-700" : "hover:bg-slate-100"
-                    }`}
+                    onClick={() => setShowCertModal(true)}
+                    className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
                   >
-                    <PlayIcon
-                      className={`h-5 w-5 ${
-                        selectedVideo?.id === id ? "text-sky-500" : "text-slate-400"
-                      }`}
-                    />
-                    <span className="flex-1">{video.title}</span>
+                    <DownloadIcon className="h-4 w-4" />
+                    Get Certificate
                   </button>
-                ))}
-                {Object.keys(course.videos || {}).length === 0 && (
-                  <div className="px-2 py-3 text-sm text-slate-500">No videos available for this course.</div>
-                )}
+                </div>
               </div>
             </div>
-          ))}
-          {courses.length === 0 && (
-            <div className="rounded-lg border bg-white p-6 text-center text-slate-500">
-              No courses available yet.
-            </div>
           )}
-        </div>
+        </section>
+
+        {/* Right Column */}
+        <aside className="lg:col-span-1 space-y-5">
+          {/* Main course selector */}
+          <div className="rounded-2xl border bg-white p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-700">Your Courses</h3>
+              {selectedPackage && (
+                <span className="text-xs font-semibold text-slate-500">{packageCompletion.pct}%</span>
+              )}
+            </div>
+            <div className="mt-3 grid grid-cols-1 gap-2">
+              {accessiblePackageIds.map((pid) => {
+                const pkg = packagesMap[pid];
+                if (!pkg) return null;
+                // Compute progress per package (bar)
+                const subIds = Object.keys(pkg.courseIds || {});
+                let total = 0;
+                let done = 0;
+                subIds.forEach((cid) => {
+                  const vids = Object.keys(coursesMap[cid]?.videos || {});
+                  total += vids.length;
+                  done += Object.keys(progress[cid] || {}).filter((k) => progress[cid]?.[k]).length;
+                });
+                const pct = total > 0 ? Math.round((Math.min(done, total) / total) * 100) : 0;
+                const active = selectedPackageId === pid;
+
+                return (
+                  <button
+                    key={pid}
+                    onClick={() => setSelectedPackageId(pid)}
+                    className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="relative h-8 w-8 overflow-hidden rounded">
+                        {pkg.imageUrl ? (
+                          <Image src={pkg.imageUrl} alt={pkg.name} fill className="object-cover" />
+                        ) : (
+                          <div className="h-full w-full bg-slate-200" />
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className={`text-sm font-semibold ${active ? "text-indigo-800" : "text-slate-800"}`}>{pkg.name}</div>
+                        <div className="mt-1 h-2 w-full rounded-full bg-slate-200">
+                          <div
+                            className={`h-2 rounded-full ${pct >= 100 ? "bg-emerald-500" : "bg-indigo-500/80"}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="text-xs font-semibold text-slate-500">{pct}%</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Sub-courses for selected package */}
+          <div className="rounded-2xl border bg-white p-4 shadow-sm">
+            <h3 className="text-sm font-semibold text-slate-700">Sub-courses</h3>
+            <div className="mt-3 grid grid-cols-1 gap-2">
+              {selectedPackage
+                ? Object.keys(selectedPackage.courseIds || {}).map((cid) => {
+                    const sc = coursesMap[cid];
+                    if (!sc) return null;
+                    const vids = Object.keys(sc.videos || {});
+                    const done = Object.keys(progress[cid] || {}).filter((k) => progress[cid]?.[k]).length;
+                    const pct = vids.length > 0 ? Math.round((Math.min(done, vids.length) / vids.length) * 100) : 0;
+                    const active = selectedSubCourseId === cid;
+                    return (
+                      <button
+                        key={cid}
+                        onClick={() => setSelectedSubCourseId(cid)}
+                        className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className={`text-sm font-semibold ${active ? "text-indigo-800" : "text-slate-800"}`}>{sc.title}</span>
+                          <span className="text-xs font-semibold text-slate-500">{pct}%</span>
+                        </div>
+                        <div className="mt-2 h-2 w-full rounded-full bg-slate-200">
+                          <div
+                            className={`h-2 rounded-full ${pct >= 100 ? "bg-emerald-500" : "bg-indigo-500/80"}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </button>
+                    );
+                  })
+                : (
+                  <div className="rounded-md bg-slate-50 p-4 text-center text-sm text-slate-500">No sub-courses.</div>
+                )}
+            </div>
+          </div>
+
+          {/* Videos in selected sub-course */}
+          <div className="rounded-2xl border bg-white p-3 shadow-sm">
+            <h3 className="px-1 text-sm font-semibold text-slate-700">{selectedSubCourse?.title || "Videos"}</h3>
+            <div className="mt-2 space-y-1.5">
+              {selectedSubCourseVideoList.length > 0 ? (
+                selectedSubCourseVideoList.map((v) => {
+                  const done = !!progress[selectedSubCourse!.id]?.[v.id];
+                  const active = selectedVideo?.id === v.id;
+                  return (
+                    <div key={v.id} className="flex items-center gap-2 rounded-lg p-2 hover:bg-slate-50">
+                      <button
+                        onClick={() => setSelectedVideo({ id: v.id, title: v.title, url: v.url })}
+                        className={`flex-1 text-left text-[13px] ${active ? "text-indigo-700 font-semibold" : "text-slate-700"}`}
+                        title={v.title}
+                      >
+                        {v.title}
+                      </button>
+                      <button
+                        onClick={() => toggleVideoCompleted(selectedSubCourse!.id, v.id)}
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 ring-slate-200 ${done ? "bg-emerald-100" : "bg-white"}`}
+                        title={done ? "Completed" : "Mark as completed"}
+                      >
+                        <CheckIcon className={`h-4 w-4 ${done ? "text-emerald-600" : "text-slate-400"}`} />
+                      </button>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="rounded-md bg-slate-50 p-4 text-center text-sm text-slate-500">No videos available.</div>
+              )}
+            </div>
+          </div>
+
+          {/* Explore more */}
+          <div className="rounded-2xl border bg-white p-4 shadow-sm">
+            <p className="text-sm text-slate-600">Need more content?</p>
+            <Link
+              href="/user/upgrade-course"
+              className="mt-2 inline-flex items-center rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              Browse Courses
+            </Link>
+          </div>
+        </aside>
       </div>
+
+      {/* Certificate Modal (original design, no signature/date) */}
+      {showCertModal && selectedPackage && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+          <div className="relative w-full max-w-4xl rounded-2xl bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h3 className="text-lg font-semibold">Certificate Preview</h3>
+              <button onClick={() => setShowCertModal(false)} className="rounded-full p-1 hover:bg-slate-100">
+                <CloseIcon className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-auto p-6 bg-slate-100">
+              {/* Certificate Canvas (classic frame style + logo) */}
+              <div
+                ref={certRef}
+                className="relative mx-auto w-full max-w-3xl bg-white"
+                style={{
+                  boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
+                  border: "12px solid #0f2743",
+                }}
+              >
+                {/* Inner frames */}
+                <div className="m-2 border-4 border-white">
+                  <div className="m-2 border-2 border-slate-300">
+                    {/* Header with logo + title */}
+                    <div className="px-8 pt-8 text-center">
+                      <div className="flex items-center justify-between">
+                        {/* Plain <img> so html2canvas captures it */}
+                        <img
+                          src="/images/courseplexlogo.png"
+                          alt="Course Plex Logo"
+                          crossOrigin="anonymous"
+                          className="h-14 w-14 object-contain"
+                        />
+                        <div className="flex-1 text-center">
+                          <div className="text-[28px] tracking-[0.35em] font-bold text-slate-700">CERTIFICATE</div>
+                          <div className="mt-1 text-sm font-semibold tracking-widest text-slate-500">OF ACHIEVEMENT</div>
+                        </div>
+                        <div className="h-14 w-14" />
+                      </div>
+
+                      {/* Accent diamonds */}
+                      <div className="mt-4 flex items-center justify-center gap-2 text-[10px]">
+                        <span className="inline-block h-2 w-2 rotate-45 bg-sky-600" />
+                        <span className="inline-block h-2 w-2 rotate-45 bg-amber-500" />
+                        <span className="inline-block h-2 w-2 rotate-45 bg-sky-600" />
+                      </div>
+
+                      <p className="mt-6 text-xs font-semibold text-slate-500">
+                        This certificate is proudly presented to
+                      </p>
+                      <div className="mt-2 text-3xl font-extrabold text-slate-900">{userName}</div>
+
+                      {/* Description */}
+                      <p className="mx-auto mt-4 max-w-xl text-[13px] leading-relaxed text-slate-600">
+                        For successfully completing the course
+                        <span className="font-semibold"> {selectedPackage.name}</span> provided by Course Plex.
+                        We recognize your dedication and effort in achieving this milestone.
+                      </p>
+
+                      {/* User info */}
+                      <div className="mx-auto mt-5 grid max-w-2xl grid-cols-2 gap-3 text-[11px]">
+                        <div className="rounded bg-slate-50 px-3 py-2 text-left ring-1 ring-slate-200">
+                          <div className="font-semibold text-slate-700">Email</div>
+                          <div className="text-slate-700">{userEmail || "-"}</div>
+                        </div>
+                        <div className="rounded bg-slate-50 px-3 py-2 text-left ring-1 ring-slate-200">
+                          <div className="font-semibold text-slate-700">Phone</div>
+                          <div className="text-slate-700">{userPhone || "-"}</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Ribbon/award */}
+                    <div className="mt-6 flex items-center justify-center">
+                      <div className="relative">
+                        <div className="mx-auto h-16 w-16 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 ring-4 ring-white shadow" />
+                        <div className="absolute inset-0 grid place-items-center">
+                          <div className="text-[10px] font-extrabold tracking-widest text-white drop-shadow">COURSE</div>
+                        </div>
+                        <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 flex gap-1">
+                          <div className="h-6 w-3 rounded-b bg-amber-500" />
+                          <div className="h-6 w-3 rounded-b bg-yellow-400" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Removed footer lines (date/signature) */}
+
+                    {/* Decorative bottom stripes */}
+                    <div className="relative mt-12 h-8 w-full overflow-hidden">
+                      <div className="absolute -left-10 top-1 h-2 w-1/2 -skew-x-12 bg-[#163455]" />
+                      <div className="absolute left-20 top-1 h-2 w-1/4 -skew-x-12 bg-[#F59E0B]" />
+                      <div className="absolute left-40 top-1 h-2 w-1/3 -skew-x-12 bg-[#245A8D]" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {/* /certificate canvas */}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 border-t p-3">
+              <button
+                onClick={() => setShowCertModal(false)}
+                className="rounded-md bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
+              >
+                Close
+              </button>
+              <button
+                onClick={downloadCertificatePNG}
+                className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+              >
+                <DownloadIcon className="h-4 w-4" />
+                Download PNG
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// Icons
-function PlayIcon(props: SVGProps<SVGSVGElement>) {
+/* ================== Icons ================== */
+function SparkleIcon(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden {...props}>
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M12 2l1.8 4.3L18 8l-4.2 1.7L12 14l-1.8-4.3L6 8l4.2-1.7L12 2zM5 16l1.2 2.8L9 20l-2.8 1.2L5 24l-1.2-2.8L1 20l2.8-1.2L5 16zm14-1l1.6 3.7L24 20l-3.4 1.3L19 25l-1.6-3.7L14 20l3.4-1.3L19 15z" opacity=".35" />
+      <path d="M12 4.5l1.3 3.1 3.2 1.3-3.2 1.3L12 13.3l-1.3-3.1-3.2-1.3 3.2-1.3L12 4.5z" />
+    </svg>
+  );
+}
+function CheckIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden fill="currentColor" {...props}>
       <path
         fillRule="evenodd"
-        d="M2 10a8 8 0 1116 0 8 8 0 01-16 0zm6.39-2.908a.75.75 0 01.98 0l4.25 3.5a.75.75 0 010 1.116l-4.25 3.5a.75.75 0 01-.98-.92L11.49 10 8.39 7.092a.75.75 0 010-.92z"
+        d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0L3.293 9.207a1 1 0 011.414-1.414l3.043 3.043 6.543-6.543a1 1 0 011.414 0z"
         clipRule="evenodd"
       />
     </svg>
   );
 }
-function StarIcon(props: SVGProps<SVGSVGElement>) {
+function DownloadIcon(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden {...props}>
-      <path
-        fillRule="evenodd"
-        d="M10.868 2.884c.321-.662 1.134-.662 1.456 0l1.83 3.778 4.167.606c.73.106 1.022.99.494 1.503l-3.014 2.938.712 4.15c.124.726-.638 1.283-1.296.952L10 15.347l-3.732 1.961c-.658.332-1.42-.226-1.296-.952l.712-4.15-3.014-2.938c-.528-.513-.236-1.397.494-1.503l4.167-.606 1.83-3.778z"
-        clipRule="evenodd"
-      />
+    <svg viewBox="0 0 20 20" aria-hidden fill="currentColor" {...props}>
+      <path d="M3 15a1 1 0 001 1h12a1 1 0 001-1v-2h-2v1H5v-1H3v2zm7-12a1 1 0 00-1 1v7.586l-2.293-2.293-1.414 1.414L10 15.414l4.707-4.707-1.414-1.414L11 11.586V4a1 1 0 00-1-1z" />
+    </svg>
+  );
+}
+function CloseIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" aria-hidden fill="currentColor" {...props}>
+      <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+    </svg>
+  );
+}
+function AwardIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden fill="currentColor" {...props}>
+      <path d="M12 2a7 7 0 00-7 7c0 3.866 3.134 7 7 7s7-3.134 7-7a7 7 0 00-7-7zm-5 7a5 5 0 1110 0 5 5 0 01-10 0z" />
+      <path d="M8 15l-3 7 7-3 7 3-3-7" />
     </svg>
   );
 }

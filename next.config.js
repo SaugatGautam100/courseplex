@@ -7,13 +7,13 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'images.unsplash.com',
         port: '',
-        pathname: '/**', // Allows any path on this hostname
+        pathname: '/**',
       },
       {
         protocol: 'https',
         hostname: 'firebasestorage.googleapis.com',
         port: '',
-        pathname: '/**', // Allows any path on this hostname
+        pathname: '/**',
       },
     ],
   },

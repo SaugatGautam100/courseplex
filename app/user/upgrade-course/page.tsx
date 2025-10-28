@@ -1,30 +1,39 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, useRef, type ChangeEvent } from "react";
 import { database, auth, storage } from "@/lib/firebase";
-import { ref as dbRef, onValue, get, push } from "firebase/database";
+import { ref as dbRef, onValue, get, push, update } from "firebase/database";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import { onAuthStateChanged } from "firebase/auth";
 import type { SVGProps } from "react";
 
-// Types
-type Package = { id: string; name: string; price: number; imageUrl: string; features?: string[]; commissionPercent?: number };
+/* ================== Types ================== */
+type Package = {
+  id: string;
+  name: string;
+  price: number;
+  imageUrl: string;
+  features?: string[];
+  commissionPercent?: number;
+};
 type UserProfile = {
   id: string;
   name: string;
   email: string;
-  courseId: string;
+  courseId?: string; // legacy single course
+  ownedCourseIds?: Record<string, boolean>; // multiple courses
   referrerId?: string;
   referredBy?: string;
 };
+
 type PaymentMethod = "eSewa" | "Khalti" | "Bank Transfer";
 type OrderStatus = "Pending Approval" | "Completed" | "Rejected";
 type Order = {
   id: string;
   userId: string;
   customerName: string;
-  product: string;
+  product: string; // "Purchase: X" or "Upgrade to: X"
   status: OrderStatus;
   paymentMethod: PaymentMethod;
   transactionCode: string;
@@ -34,18 +43,11 @@ type Order = {
   referrerId?: string;
   paymentProofUrl?: string;
 };
-type SpecialAccess = {
-  active?: boolean;
-  enabled?: boolean;
-  packageId?: string;
-  commissionPercent?: number;
-  previousCourseId?: string | null;
-};
 
-type OrderDb = Omit<Order, "id">;
-type OrdersDb = Record<string, OrderDb>;
+type OrdersDb = Record<string, Omit<Order, "id">>;
 type PackagesDb = Record<string, Omit<Package, "id">>;
 
+/* ================== Helpers ================== */
 function parseUniversalQR(val: unknown): string | null {
   if (!val) return null;
   if (typeof val === "string") return val;
@@ -56,32 +58,36 @@ function parseUniversalQR(val: unknown): string | null {
   return null;
 }
 
-export default function UpgradeCoursePage() {
+/* ================== Page ================== */
+export default function BuyCoursePage() {
   const [packages, setPackages] = useState<Package[]>([]);
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [currentPackage, setCurrentPackage] = useState<Package | null>(null);
+  const [ownedSet, setOwnedSet] = useState<Set<string>>(new Set());
+  const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Universal QR
+  const [universalQr, setUniversalQr] = useState<string>("/images/shnqrcode.jpg");
+
+  // Purchase modal
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [latestUpgrade, setLatestUpgrade] = useState<Order | null>(null);
 
-  // Single universal QR
-  const [universalQr, setUniversalQr] = useState<string>("/images/shnqrcode.jpg");
+  // Search
+  const [query, setQuery] = useState("");
 
-  // Special access state
-  const [specialAccess, setSpecialAccess] = useState<SpecialAccess | null>(null);
-  const [specialPackage, setSpecialPackage] = useState<Package | null>(null);
+  // Avoid repeated sync loops
+  const syncingLegacyRef = useRef(false);
 
   useEffect(() => {
     let unsubUser: (() => void) | null = null;
     let unsubOrders: (() => void) | null = null;
     let unsubQR1: (() => void) | null = null;
     let unsubQR2: (() => void) | null = null;
-    let unsubSpecial: (() => void) | null = null;
 
     const unsubAuth = onAuthStateChanged(auth, async (fbUser) => {
-      // Load packages (public)
+      // Load courses (public packages)
       const pkSnap = await get(dbRef(database, "packages"));
       const pkObj = (pkSnap.val() as PackagesDb | null) ?? {};
       const pks: Package[] = Object.entries(pkObj).map(([id, v]) => ({
@@ -92,7 +98,7 @@ export default function UpgradeCoursePage() {
       pks.sort((a, b) => (a.price || 0) - (b.price || 0));
       setPackages(pks);
 
-      // Listen to universal QR
+      // Listen to universal QR (two fallback paths)
       const ref1 = dbRef(database, "paymentQRCodes/universal");
       const ref2 = dbRef(database, "universalPaymentQR");
       unsubQR1 = onValue(ref1, (snap) => {
@@ -105,77 +111,58 @@ export default function UpgradeCoursePage() {
       });
 
       if (!fbUser) {
+        setUser(null);
+        setOwnedSet(new Set());
+        setOrders([]);
         setLoading(false);
         return;
       }
 
-      // Listen to current user profile
+      // Listen to current user
       const userRef = dbRef(database, `users/${fbUser.uid}`);
       unsubUser = onValue(userRef, async (snap) => {
-        const val = snap.val() as Partial<UserProfile> | null;
-        if (!val) {
-          setUser(null);
-          setCurrentPackage(null);
-          setLoading(false);
-          return;
-        }
+        const val = (snap.val() || {}) as Partial<UserProfile>;
         const u: UserProfile = {
           id: fbUser.uid,
-          name: val.name || "",
-          email: val.email || "",
-          courseId: val.courseId || "",
-          referrerId: val.referrerId,
-          referredBy: val.referredBy,
+          name: String(val?.name || ""),
+          email: String(val?.email || fbUser.email || ""),
+          courseId: val?.courseId,
+          ownedCourseIds: val?.ownedCourseIds || undefined,
+          referrerId: val?.referrerId,
+          referredBy: val?.referredBy,
         };
         setUser(u);
-        const current = pks.find((pk) => pk.id === u.courseId) || null;
-        setCurrentPackage(current || null);
+
+        // Build owned set (support legacy courseId + new ownedCourseIds map)
+        const s = new Set<string>();
+        if (u.courseId) s.add(u.courseId);
+        if (u.ownedCourseIds) {
+          Object.entries(u.ownedCourseIds).forEach(([cid, v]) => {
+            if (v) s.add(cid);
+          });
+        }
+        setOwnedSet(s);
+
+        // Migrate legacy courseId -> ownedCourseIds if missing
+        if (u.courseId && !u.ownedCourseIds?.[u.courseId] && !syncingLegacyRef.current) {
+          try {
+            syncingLegacyRef.current = true;
+            await update(dbRef(database, `users/${u.id}/ownedCourseIds`), { [u.courseId]: true });
+          } catch (e) {
+            console.warn("Legacy course migration failed:", e);
+          } finally {
+            syncingLegacyRef.current = false;
+          }
+        }
         setLoading(false);
       });
 
-      // Listen to special access
-      const specialRef = dbRef(database, `users/${fbUser.uid}/specialAccess`);
-      unsubSpecial = onValue(specialRef, async (snap) => {
-        const sa = (snap.val() || null) as SpecialAccess | null;
-        setSpecialAccess(sa);
-
-        if (sa?.active !== false && sa?.packageId) {
-          // Load special package details from specialPackages
-          const spSnap = await get(dbRef(database, `specialPackages/${sa.packageId}`));
-          if (spSnap.exists()) {
-            const v = spSnap.val() as Partial<Package>;
-            setSpecialPackage({
-              id: sa.packageId!,
-              name: String(v.name || "Special Package"),
-              price: Number(v.price || 0),
-              imageUrl: String(v.imageUrl || ""),
-              commissionPercent: typeof v.commissionPercent === "number" ? v.commissionPercent : 58,
-              features: v.features,
-            });
-          } else {
-            // Fallback: if admin accidentally used public package id
-            const fromPublic = pks.find((x) => x.id === sa.packageId) || null;
-            setSpecialPackage(fromPublic);
-          }
-        } else {
-          setSpecialPackage(null);
-        }
-      });
-
-      // Listen to orders
+      // Listen to all orders (we’ll filter user’s orders in memory)
       const ordersRef = dbRef(database, "orders");
       unsubOrders = onValue(ordersRef, (snap) => {
         const all = (snap.val() as OrdersDb | null) ?? {};
-        const orders: Order[] = Object.entries(all).map(([id, v]) => ({ id, ...v }));
-        const myUpgrades = orders.filter(
-          (o) => o.userId === fbUser.uid && typeof o.product === "string" && o.product.startsWith("Upgrade")
-        );
-        if (myUpgrades.length === 0) {
-          setLatestUpgrade(null);
-          return;
-        }
-        myUpgrades.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setLatestUpgrade(myUpgrades[0]);
+        const list: Order[] = Object.entries(all).map(([id, v]) => ({ id, ...v }));
+        setOrders(list);
       });
     });
 
@@ -185,55 +172,71 @@ export default function UpgradeCoursePage() {
       if (unsubOrders) unsubOrders();
       if (unsubQR1) unsubQR1();
       if (unsubQR2) unsubQR2();
-      if (unsubSpecial) unsubSpecial();
     };
   }, []);
 
-  // Determine if the user has an active special package.
-  const hasActiveSpecial = useMemo(() => {
-    return !!(specialAccess && specialAccess.active !== false && specialPackage);
-  }, [specialAccess, specialPackage]);
+  const userOrders = useMemo(() => {
+    if (!user) return [];
+    return orders
+      .filter((o) => o.userId === user.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [orders, user]);
 
-  // Show only higher-priced (upper tier) packages for upgrade
-  const upgradeOptions = useMemo(() => {
+  const pendingPurchases = useMemo(() => {
+    return userOrders.filter((o) => o.status === "Pending Approval" && o.product?.startsWith("Purchase"));
+  }, [userOrders]);
+
+  const ownedCourses = useMemo(() => {
+    if (!packages.length || !ownedSet.size) return [];
+    return packages.filter((p) => ownedSet.has(p.id));
+  }, [packages, ownedSet]);
+
+  const availableToBuy = useMemo(() => {
     if (!packages.length) return [];
-    if (!currentPackage) return packages; // fallback if user has no current package
-    const currentPrice = Number(currentPackage.price) || 0;
-    return packages.filter(
-      (p) => p.id !== currentPackage.id && p.id !== specialPackage?.id && (Number(p.price) || 0) > currentPrice
-    );
-  }, [packages, currentPackage, specialPackage]);
+    return packages.filter((p) => !ownedSet.has(p.id));
+  }, [packages, ownedSet]);
 
-  const openUpgradeModal = (pkg: Package) => {
+  // Search filter for Add More Courses
+  const filteredAvailableToBuy = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return availableToBuy;
+    return availableToBuy.filter((p) => {
+      const inName = p.name?.toLowerCase().includes(q);
+      const inFeatures = (p.features || []).some((f) => f.toLowerCase().includes(q));
+      return inName || inFeatures;
+    });
+  }, [availableToBuy, query]);
+
+  const openPurchaseModal = (pkg: Package) => {
     setSelectedPackage(pkg);
     setIsModalOpen(true);
   };
-  const closeUpgradeModal = () => {
-    setIsModalOpen(false);
+  const closePurchaseModal = () => {
     setSelectedPackage(null);
+    setIsModalOpen(false);
   };
 
-  const handleSubmitUpgrade = async (
+  const hasPendingForCourse = (courseId: string) => {
+    return pendingPurchases.some((o) => o.courseId === courseId);
+  };
+
+  const handleSubmitPurchase = async (
     pkg: Package,
     paymentMethod: PaymentMethod,
     transactionCode: string,
     paymentProof: File | null
   ) => {
     if (!user) return;
-    if (hasActiveSpecial) {
-      alert("You’re on a special package with all-access. Upgrading isn’t needed.");
-      return;
-    }
-    if (latestUpgrade?.status === "Pending Approval") {
-      alert("You already have a pending upgrade request. Please wait for admin approval.");
-      return;
-    }
     if (!transactionCode || transactionCode.trim().length < 5) {
       alert("Please enter a valid transaction code.");
       return;
     }
     if (!paymentProof) {
       alert("Please upload a payment proof screenshot.");
+      return;
+    }
+    if (hasPendingForCourse(pkg.id)) {
+      alert("You already have a pending purchase for this course.");
       return;
     }
 
@@ -249,7 +252,7 @@ export default function UpgradeCoursePage() {
       const newOrder: Omit<Order, "id"> = {
         userId: user.id,
         customerName: user.name,
-        product: `Upgrade to: ${pkg.name}`,
+        product: `Purchase: ${pkg.name}`,
         status: "Pending Approval",
         paymentMethod,
         transactionCode: transactionCode.trim(),
@@ -260,117 +263,150 @@ export default function UpgradeCoursePage() {
         ...(referrerId ? { referrerId } : {}),
       };
       await push(dbRef(database, "orders"), newOrder);
-      closeUpgradeModal();
+      closePurchaseModal();
+      alert("Your purchase request has been submitted and is pending approval.");
     } catch (e) {
-      console.error("Failed to create upgrade order:", e);
-      alert("Failed to submit upgrade request. Please try again.");
+      console.error("Failed to create purchase order:", e);
+      alert("Failed to submit purchase request. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const approvedPackageName = useMemo(() => {
-    if (latestUpgrade?.status !== "Completed") return null;
-    const approvedPkg = packages.find((p) => p.id === latestUpgrade?.courseId);
-    return approvedPkg?.name || null;
-  }, [latestUpgrade, packages]);
 
   if (loading) return <div className="p-8 text-center text-slate-500">Loading...</div>;
 
   return (
     <div className="min-h-screen overflow-auto">
       <header className="mb-6 p-4">
-        <h1 className="text-3xl font-bold">Upgrade Your Package</h1>
-        <p className="mt-2 text-slate-600">Unlock more features.</p>
+        <h1 className="text-3xl font-bold">Buy Another Course</h1>
+        <p className="mt-2 text-slate-600">View your courses and add more anytime.</p>
       </header>
 
-      {/* Special package banner (no revoke button) */}
-      {hasActiveSpecial && specialPackage && (
-        <div className="mx-4 mb-6 rounded-lg border-2 border-emerald-400 bg-gradient-to-r from-emerald-50 to-green-50 p-4">
+      {/* Owned courses */}
+      <section className="mx-4 mb-10">
+        <h2 className="text-lg font-semibold text-slate-900">Your Courses</h2>
+        {ownedCourses.length > 0 ? (
+          <div className="mt-4 grid grid-cols-1 gap-6 sm:grid-cols-2">
+            {ownedCourses.map((pkg) => (
+              <article key={pkg.id} className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 overflow-hidden">
+                <div className="relative h-36 w-full">
+                  {pkg.imageUrl ? (
+                    <Image src={pkg.imageUrl} alt={pkg.name} fill className="object-cover" />
+                  ) : (
+                    <div className="h-full w-full bg-slate-100" />
+                  )}
+                </div>
+                <div className="p-4">
+                  <h3 className="text-base font-semibold">{pkg.name}</h3>
+                  <div className="text-sm text-slate-600 mt-1">Rs {Number(pkg.price || 0).toLocaleString()}</div>
+                  {!!pkg.features?.length && (
+                    <ul className="mt-3 space-y-1 text-sm text-slate-700">
+                      {pkg.features.slice(0, 4).map((f, idx) => (
+                        <li key={`${f}-${idx}`} className="flex items-start gap-2">
+                          <CheckIcon className="h-4 w-4 text-emerald-600 mt-0.5" />
+                          <span>{f}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-lg border border-slate-200 bg-white p-6 text-slate-600">
+            You don’t have any courses yet. Pick one from “Add More Courses” below.
+          </div>
+        )}
+      </section>
+
+      {/* Pending purchases banner */}
+      {pendingPurchases.length > 0 && (
+        <div className="mx-4 mb-8 rounded-lg border-2 border-dashed border-yellow-300 bg-yellow-50 p-4">
           <div className="flex items-start gap-3">
-            <TrophyIcon className="h-6 w-6 text-emerald-600" />
+            <ClockIcon className="h-6 w-6 text-yellow-600" />
             <div>
-              <h3 className="text-base font-semibold text-emerald-800">
-                Your package is {specialPackage.name}.
-              </h3>
-              <p className="text-sm text-emerald-700 mt-0.5">
-                Your commission is{" "}
-                <span className="font-semibold">
-                  {specialAccess?.commissionPercent ?? specialPackage.commissionPercent ?? 58}%
-                </span>
-                . You don’t need to upgrade your course.
-              </p>
+              <p className="font-semibold text-yellow-800">You have {pendingPurchases.length} pending purchase{pendingPurchases.length > 1 ? "s" : ""}</p>
+              <p className="text-sm text-yellow-700 mt-0.5">We’re verifying your payment. You’ll be notified after approval.</p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Upgrade status banner (shown even if special is active) */}
-      <UpgradeStatusBanner latestUpgrade={latestUpgrade} />
+      {/* Available to buy + Search */}
+      <section className="mx-4 mb-12">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <h2 className="text-lg font-semibold text-slate-900">Add More Courses</h2>
 
-      {currentPackage && !hasActiveSpecial && (
-        <div className="mb-8 rounded-lg border-2 border-sky-500 bg-sky-50 p-6 mx-4">
-          <h2 className="text-sm font-semibold text-sky-800">Your Current Package</h2>
-          <p className="text-xl font-bold text-sky-900 mt-1">{currentPackage.name}</p>
+          {/* Search bar */}
+          <div className="relative w-full sm:w-80">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setQuery(e.target.value)}
+              placeholder="Search courses"
+              aria-label="Search courses"
+              className="w-full rounded-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 shadow-sm outline-none ring-1 ring-transparent transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-sky-200"
+            />
+          </div>
         </div>
-      )}
 
-      {/* Hide all upgrade options while special is active */}
-      {!hasActiveSpecial && (
-        <>
-          {upgradeOptions.length > 0 ? (
-            <div className="grid grid-cols-1 gap-8 md:grid-cols-2 px-4">
-              {upgradeOptions.map((pkg) => (
-                <article
-                  key={pkg.id}
-                  className="flex flex-col rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 hover:shadow-lg"
-                >
-                  <div className="relative h-48 w-full">
-                    <Image src={pkg.imageUrl} alt={pkg.name} fill className="object-cover rounded-t-2xl" />
+        {filteredAvailableToBuy.length > 0 ? (
+          <div className="mt-4 grid grid-cols-1 gap-8 md:grid-cols-2">
+            {filteredAvailableToBuy.map((pkg) => (
+              <article key={pkg.id} className="flex flex-col rounded-2xl bg-white shadow-sm ring-1 ring-slate-200 hover:shadow-lg overflow-hidden">
+                <div className="relative h-48 w-full">
+                  {pkg.imageUrl ? (
+                    <Image src={pkg.imageUrl} alt={pkg.name} fill className="object-cover" />
+                  ) : (
+                    <div className="h-full w-full bg-slate-100" />
+                  )}
+                </div>
+                <div className="p-6 flex flex-col flex-grow">
+                  <h3 className="text-xl font-bold">{pkg.name}</h3>
+                  <div className="mt-2 flex items-baseline gap-1">
+                    <span className="text-3xl font-extrabold">Rs {Number(pkg.price || 0).toLocaleString()}</span>
                   </div>
-                  <div className="p-6 flex flex-col flex-grow">
-                    <h3 className="text-xl font-bold">{pkg.name}</h3>
-                    <div className="mt-2 flex items-baseline gap-1">
-                      <span className="text-3xl font-extrabold">Rs {pkg.price.toLocaleString()}</span>
-                    </div>
+                  {!!pkg.features?.length && (
                     <ul className="mt-6 space-y-3 text-sm text-slate-700 flex-grow">
-                      {pkg.features?.map((f) => (
-                        <li key={f} className="flex items-start gap-3">
-                          <CheckIcon />
+                      {pkg.features.slice(0, 6).map((f, idx) => (
+                        <li key={`${f}-${idx}`} className="flex items-start gap-3">
+                          <CheckIcon className="h-5 w-5 text-emerald-600 mt-0.5" />
                           <span>{f}</span>
                         </li>
                       ))}
                     </ul>
-                    <div className="mt-8">
-                      <button
-                        onClick={() => openUpgradeModal(pkg)}
-                        className="w-full rounded-full bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:bg-sky-400"
-                        disabled={isSubmitting}
-                      >
-                        Upgrade to {pkg.name}
-                      </button>
-                    </div>
+                  )}
+                  <div className="mt-8">
+                    <button
+                      onClick={() => openPurchaseModal(pkg)}
+                      className="w-full rounded-full bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-sky-700 disabled:bg-sky-400"
+                      disabled={isSubmitting || hasPendingForCourse(pkg.id)}
+                      title={hasPendingForCourse(pkg.id) ? "Pending purchase exists" : "Buy this course"}
+                    >
+                      {hasPendingForCourse(pkg.id) ? "Pending Verification" : `Buy ${pkg.name}`}
+                    </button>
                   </div>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="text-center p-12 bg-white rounded-lg border shadow-sm mx-4">
-              <div className="mx-auto h-12 w-12 flex items-center justify-center rounded-full bg-green-100">
-                <TrophyIcon />
-              </div>
-              <h3 className="mt-4 text-lg font-semibold">You&apos;re on the Top Tier!</h3>
-              <p className="mt-2 text-slate-600">You already have our best package.</p>
-            </div>
-          )}
-        </>
-      )}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-lg border border-slate-200 bg-white p-6 text-slate-600">
+            {availableToBuy.length === 0
+              ? "You already own all available courses. 🎉"
+              : "No courses match your search."}
+          </div>
+        )}
+      </section>
 
+      {/* Purchase Modal */}
       {isModalOpen && selectedPackage && user && (
-        <UpgradePaymentModal
+        <PurchasePaymentModal
           pkg={selectedPackage}
-          onClose={closeUpgradeModal}
-          onSubmit={handleSubmitUpgrade}
+          onClose={closePurchaseModal}
+          onSubmit={handleSubmitPurchase}
           submitting={isSubmitting}
           qrUrl={universalQr}
         />
@@ -379,65 +415,8 @@ export default function UpgradeCoursePage() {
   );
 }
 
-// Upgrade Status Banner Component
-function UpgradeStatusBanner({ latestUpgrade, compact = false }: { latestUpgrade: Order | null; compact?: boolean }) {
-  if (!latestUpgrade) return null;
-  const productName = latestUpgrade.product?.replace("Upgrade to: ", "") || "your upgrade";
-  if (latestUpgrade.status === "Pending Approval")
-    return (
-      <div
-        className={`rounded-lg border-2 border-dashed border-yellow-300 bg-yellow-50 ${
-          compact ? "p-4" : "p-6"
-        } mb-6 mx-4`}
-      >
-        <div className="flex items-start gap-3">
-          <div className="h-10 w-10 flex items-center justify-center rounded-full bg-yellow-100">
-            <ClockIcon />
-          </div>
-          <div>
-            <p className="font-semibold text-yellow-800">Upgrade request is being reviewed</p>
-            <p className="text-sm text-yellow-700 mt-0.5">
-              We&apos;re verifying your payment for {productName}. You&apos;ll be notified after approval.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  if (latestUpgrade.status === "Rejected")
-    return (
-      <div className={`rounded-lg border border-red-200 bg-red-50 ${compact ? "p-4" : "p-6"} mb-6 mx-4`}>
-        <div className="flex items-start gap-3">
-          <div className="h-10 w-10 flex items-center justify-center rounded-full bg-red-100">
-            <AlertIcon />
-          </div>
-          <div>
-            <p className="font-semibold text-red-800">Upgrade failed</p>
-            <p className="text-sm text-red-700 mt-0.5">
-              Your upgrade request was rejected. Please check your transaction and try again.
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  if (latestUpgrade.status === "Completed")
-    return (
-      <div className={`rounded-lg border border-green-200 bg-green-50 ${compact ? "p-4" : "p-6"} mb-6 mx-4`}>
-        <div className="flex items-start gap-3">
-          <div className="h-10 w-10 flex items-center justify-center rounded-full bg-green-100">
-            <TrophyIcon />
-          </div>
-          <div>
-            <p className="font-semibold text-green-800">Upgrade complete</p>
-            <p className="text-sm text-green-700 mt-0.5">Your package has been upgraded to {productName}.</p>
-          </div>
-        </div>
-      </div>
-    );
-  return null;
-}
-
-// Upgrade Payment Modal Component
-function UpgradePaymentModal({
+/* ================== Purchase Modal ================== */
+function PurchasePaymentModal({
   pkg,
   onClose,
   onSubmit,
@@ -473,18 +452,18 @@ function UpgradePaymentModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="relative w-full max-w-lg rounded-xl bg-white p-4 sm:p-6 shadow-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg sm:text-xl font-semibold">Upgrade to {pkg.name}</h3>
-          <button onClick={onClose} className="rounded-full p-1 hover:bg-slate-100">
+          <h3 className="text-lg sm:text-xl font-semibold">Purchase: {pkg.name}</h3>
+          <button onClick={onClose} className="rounded-full p-1 hover:bg-slate-100" aria-label="Close">
             <CloseIcon />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="mt-4 space-y-4">
           <div className="rounded-lg bg-slate-50 p-4">
             <p className="text-sm text-slate-600">
-              Amount: <span className="font-semibold">Rs {pkg.price.toLocaleString()}</span>
+              Amount: <span className="font-semibold">Rs {Number(pkg.price || 0).toLocaleString()}</span>
             </p>
             <p className="text-sm text-slate-600">
-              Account: <span className="font-semibold">Skill Hub Nepal</span>
+              Account: <span className="font-semibold">Course Plex</span>
             </p>
           </div>
 
@@ -590,7 +569,7 @@ function UpgradePaymentModal({
               disabled={submitting}
               className="rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:bg-sky-400"
             >
-              {submitting ? "Submitting..." : `Submit Rs ${pkg.price.toLocaleString()}`}
+              {submitting ? "Submitting..." : `Submit Rs ${Number(pkg.price || 0).toLocaleString()}`}
             </button>
           </div>
         </form>
@@ -602,7 +581,7 @@ function UpgradePaymentModal({
   );
 }
 
-// Icons
+/* ================== Icons ================== */
 function CheckIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" aria-hidden fill="currentColor" className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" {...props}>
@@ -610,24 +589,10 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-function TrophyIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="h-6 w-6 text-green-600" {...props}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M9 11l3-3m0 0l3 3m-3-3v8m0-13a9 9 0 110 18 9 9 0 010-18z" />
-    </svg>
-  );
-}
 function ClockIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="h-6 w-6 text-yellow-600" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-}
-function AlertIcon(props: SVGProps<SVGSVGElement>) {
-  return (
-    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} className="h-6 w-6 text-red-600" {...props}>
-      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M4.062 20h15.876c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L2.33 17c-.77 1.333.192 3 1.732 3z" />
     </svg>
   );
 }
@@ -654,6 +619,17 @@ function UploadIcon(props: SVGProps<SVGSVGElement>) {
         strokeWidth={1.8}
         strokeLinecap="round"
         strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function SearchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden {...props}>
+      <path
+        fillRule="evenodd"
+        d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
+        clipRule="evenodd"
       />
     </svg>
   );

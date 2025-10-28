@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { useState, useEffect, type FormEvent, type ChangeEvent } from "react";
+import { useState, useEffect, type FormEvent, type ChangeEvent, KeyboardEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { auth, database, storage } from "@/lib/firebase";
 import { createUserWithEmailAndPassword, signOut } from "firebase/auth";
@@ -10,14 +10,37 @@ import { ref as dbRef, set, onValue, get, push } from "firebase/database";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import type { SVGProps, ReactNode } from "react";
 
-// Types
-type PackageDB = { name: string; price: number; currency?: string };
-type Package = { id: string; name: string; price: number; currency?: string };
+// Extended types for Courses and Packages
+type PackagesMapRaw = Record<
+  string,
+  {
+    name: string;
+    price: number;
+    currency?: string;
+    imageUrl?: string;
+    courseIds?: Record<string, boolean>;
+    highlight?: boolean;
+    badge?: string;
+  }
+>;
+type CoursesMap = Record<string, { title: string }>;
+
+type Package = {
+  id: string;
+  name: string;
+  price: number;
+  currency?: string;
+  imageUrl?: string;
+  highlight?: boolean;
+  badge?: string;
+  features: string[]; // sub-course titles
+};
+
 type PaymentMethod = "eSewa" | "Khalti" | "Bank Transfer";
 type QrCodes = { universal?: string; esewa?: string; khalti?: string; bank?: string };
-// Include legacy keys for compatibility
 type PaymentQRCodesDb = Partial<QrCodes> & { eSewa?: string; bankTransfer?: string };
 
+// Helpers
 function methodKey(method: PaymentMethod): keyof QrCodes {
   switch (method) {
     case "eSewa":
@@ -51,6 +74,8 @@ export default function SignUpClient() {
   const [cleanReferrerId, setCleanReferrerId] = useState<string | null>(null);
 
   const [packages, setPackages] = useState<Package[]>([]);
+  const [pkgQuery, setPkgQuery] = useState<string>("");
+
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
 
@@ -89,26 +114,40 @@ export default function SignUpClient() {
     void clearExistingSession();
   }, []);
 
-  // Load packages
+  // Load packages WITH details (image, sub-course titles)
   useEffect(() => {
     const packagesRef = dbRef(database, "packages/");
-    const unsubscribe = onValue(packagesRef, (snapshot) => {
-      const data = snapshot.val() as Record<string, PackageDB> | null;
-      const packagesArray: Package[] = data
-        ? Object.entries(data).map(([id, pkg]) => ({
+    const unsubscribe = onValue(packagesRef, async (snapshot) => {
+      try {
+        const pkgMap = (snapshot.val() || {}) as PackagesMapRaw;
+        const coursesSnap = await get(dbRef(database, "courses/"));
+        const coursesMap = (coursesSnap.val() as CoursesMap | null) ?? {};
+
+        const list: Package[] = Object.entries(pkgMap).map(([id, p]) => {
+          const features = p.courseIds
+            ? Object.keys(p.courseIds).map((cid) => coursesMap[cid]?.title || "Unknown Sub-course")
+            : [];
+          return {
             id,
-            name: String(pkg.name),
-            price: Number(pkg.price || 0),
-            currency: pkg.currency,
-          }))
-        : [];
-      packagesArray.sort((a, b) => (a.price || 0) - (b.price || 0));
-      setPackages(packagesArray);
+            name: String(p.name || ""),
+            price: Number(p.price || 0),
+            currency: p.currency,
+            imageUrl: p.imageUrl,
+            highlight: Boolean(p.highlight),
+            badge: p.badge || "",
+            features,
+          };
+        });
+        list.sort((a, b) => (a.price || 0) - (b.price || 0));
+        setPackages(list);
+      } catch (e) {
+        console.error("Failed to load packages:", e);
+      }
     });
     return () => unsubscribe();
   }, []);
 
-  // After packages are loaded, preselect from ?packageId=... if valid; else first package
+  // Preselect from ?packageId=... if valid, else first
   useEffect(() => {
     if (!packages.length) return;
     setSelectedPackageId((prev) => {
@@ -210,7 +249,7 @@ export default function SignUpClient() {
 
     if (!profilePicture) return setError("Please upload a profile picture.");
     if (!name.trim()) return setError("Please enter your full name.");
-    if (!selectedPackageId) return setError("Please select a package.");
+    if (!selectedPackageId) return setError("Please select a course.");
     if (!paymentProof) return setError("Please upload a payment proof screenshot.");
     if (!transactionCode.trim()) return setError("Please enter the transaction code.");
 
@@ -245,7 +284,7 @@ export default function SignUpClient() {
         imageUrl,
         createdAt: new Date().toISOString(),
         status: "pending_approval",
-        courseId: selectedPackageId,
+        courseId: selectedPackageId, // selected course (bundle)
         referredBy: cleanReferrerId,
         balance: 0,
         totalEarnings: 0,
@@ -283,8 +322,8 @@ export default function SignUpClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           to: email,
-          subject: "Welcome to Skill Hub Nepal! Account Under Review.",
-          htmlContent: `<h1>Welcome, ${name.trim()}!</h1><p>Thank you for registering. Your account is now pending review by our admin team. You will receive another email once it is activated.</p><p>The Skill Hub Nepal Team</p>`,
+          subject: "Welcome! Account Under Review.",
+          htmlContent: `<h1>Welcome, ${name.trim()}!</h1><p>Thank you for registering. Your account is now pending review by our admin team. You will receive another email once it is activated.</p>`,
         }),
       });
 
@@ -294,8 +333,7 @@ export default function SignUpClient() {
       let msg = "Failed to create account. Please try again.";
       if (typeof err === "object" && err && "code" in err) {
         const code = (err as { code: string }).code;
-        if (code === "auth/email-already-in-use")
-          msg = "This email is already registered. Please log in instead.";
+        if (code === "auth/email-already-in-use") msg = "This email is already registered. Please log in instead.";
         if (code === "auth/invalid-email") msg = "Invalid email address format.";
         if (code === "auth/weak-password") msg = "Password is too weak. It must be at least 6 characters.";
         if (code === "auth/network-request-failed") msg = "Network error. Please check your connection and try again.";
@@ -308,20 +346,33 @@ export default function SignUpClient() {
     }
   };
 
-  const selectedPackagePrice =
-    packages.find((p) => p.id === selectedPackageId)?.price || 0;
-  const currentQr =
-    qrCodes.universal ||
-    qrCodes[methodKey(paymentMethod)] ||
-    "/images/shnqrcode.jpg";
+  const filteredPackages = packages.filter((p) => {
+    const q = pkgQuery.trim().toLowerCase();
+    if (!q) return true;
+    const inName = p.name.toLowerCase().includes(q);
+    const inBadge = (p.badge || "").toLowerCase().includes(q);
+    const inFeatures = p.features.some((f) => f.toLowerCase().includes(q));
+    return inName || inBadge || inFeatures;
+  });
+
+  const onCardKeyDown = (e: KeyboardEvent<HTMLDivElement>, id: string) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      setSelectedPackageId(id);
+    }
+  };
+
+  const selectedPackagePrice = packages.find((p) => p.id === selectedPackageId)?.price || 0;
+  const currentQr = qrCodes.universal || qrCodes[methodKey(paymentMethod)] || "/images/shnqrcode.jpg";
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-800 antialiased">
+      {/* Narrow layout as requested */}
       <section className="mx-auto max-w-lg px-4 py-12 md:py-16">
         <div className="rounded-lg border border-slate-200 bg-white p-6 shadow-sm md:p-8">
           <div className="mb-8 text-center">
             <h1 className="text-3xl font-bold">Create Your Account</h1>
-            <p className="mt-2 text-base text-slate-600">Join Skill Hub Nepal</p>
+            <p className="mt-2 text-base text-slate-600">Join our platform</p>
           </div>
 
           {wasRejected && (
@@ -355,14 +406,7 @@ export default function SignUpClient() {
                     className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                   >
                     <span>Upload Picture</span>
-                    <input
-                      id="picture-upload"
-                      name="picture-upload"
-                      type="file"
-                      className="sr-only"
-                      accept="image/*"
-                      onChange={handlePictureChange}
-                    />
+                    <input id="picture-upload" name="picture-upload" type="file" className="sr-only" accept="image/*" onChange={handlePictureChange} />
                   </label>
                 </div>
               </div>
@@ -384,32 +428,112 @@ export default function SignUpClient() {
               )}
             </fieldset>
 
-            {/* Step 2: Choose Package */}
-            <fieldset className="space-y-3">
-              <legend className="w-full border-b pb-3 text-lg font-semibold">Step 2: Choose Your Package</legend>
-              {packages.map((pkg) => (
-                <label
-                  key={pkg.id}
-                  htmlFor={pkg.id}
-                  className={`flex cursor-pointer items-center rounded-md border p-4 transition-all ${
-                    selectedPackageId === pkg.id ? "border-sky-500 ring-2 ring-sky-200 bg-sky-50/50" : "border-slate-300"
-                  }`}
-                >
+            {/* Step 2: Choose Course (two columns within a scroll area) */}
+            <fieldset className="space-y-4">
+              <legend className="w-full border-b pb-3 text-lg font-semibold">Step 2: Choose Your Course</legend>
+
+              {/* Search bar for courses */}
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <SearchIcon className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                   <input
-                    type="radio"
-                    id={pkg.id}
-                    name="package"
-                    value={pkg.id}
-                    checked={selectedPackageId === pkg.id}
-                    onChange={(e) => setSelectedPackageId(e.target.value)}
-                    className="h-4 w-4 text-sky-600 focus:ring-sky-500"
+                    type="search"
+                    value={pkgQuery}
+                    onChange={(e) => setPkgQuery(e.target.value)}
+                    placeholder="Search courses"
+                    aria-label="Search courses"
+                    className="w-full rounded-full border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 shadow-sm outline-none ring-1 ring-transparent transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-sky-200"
                   />
-                  <span className="ml-4 flex-grow justify-between items-center flex">
-                    <span className="font-semibold text-slate-800">{pkg.name}</span>
-                    <span className="font-mono text-sm text-slate-600">Rs {pkg.price.toLocaleString()}</span>
-                  </span>
-                </label>
-              ))}
+                </div>
+              </div>
+
+              {/* Scrollable grid: two columns */}
+              <div role="radiogroup" aria-label="Choose your course" className="rounded-lg border border-slate-200">
+                <div className="h-[420px] overflow-y-auto p-3">
+                  {filteredPackages.length === 0 && (
+                    <div className="rounded-md border bg-slate-50 p-6 text-center text-slate-500">
+                      No courses match your search.
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-3">
+                    {filteredPackages.map((pkg) => {
+                      const selected = selectedPackageId === pkg.id;
+                      const featureChips = pkg.features.slice(0, 3);
+                      const extra = Math.max(0, (pkg.features?.length || 0) - featureChips.length);
+
+                      return (
+                        <div
+                          key={pkg.id}
+                          className={[
+                            "flex cursor-pointer flex-col overflow-hidden rounded-xl border bg-white transition hover:shadow-md focus:outline-none",
+                            selected ? "border-sky-500 ring-2 ring-sky-200" : "border-slate-200",
+                          ].join(" ")}
+                          onClick={() => setSelectedPackageId(pkg.id)}
+                          onKeyDown={(e) => onCardKeyDown(e, pkg.id)}
+                          role="radio"
+                          aria-checked={selected}
+                          tabIndex={0}
+                        >
+                          <div className="relative h-28 w-full">
+                            {pkg.imageUrl ? (
+                              <Image src={pkg.imageUrl} alt={pkg.name} fill className="object-cover" />
+                            ) : (
+                              <div className="flex h-full items-center justify-center bg-slate-100 text-slate-400">
+                                No Image
+                              </div>
+                            )}
+                            {pkg.badge && (
+                              <div className="absolute left-2 top-2 rounded-full bg-sky-600 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                                {pkg.badge}
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <h4 className="text-sm font-semibold text-slate-900 leading-snug">{pkg.name}</h4>
+                              <div className="text-[12px] font-mono text-slate-600 whitespace-nowrap">
+                                Rs {pkg.price.toLocaleString()}
+                              </div>
+                            </div>
+
+                            {!!featureChips.length && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {featureChips.map((t, idx) => (
+                                  <span
+                                    key={`${t}-${idx}`}
+                                    className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 ring-1 ring-slate-200"
+                                  >
+                                    {t}
+                                  </span>
+                                ))}
+                                {extra > 0 && (
+                                  <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 ring-1 ring-indigo-200">
+                                    +{extra}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="mt-3">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPackageId(pkg.id)}
+                                className={[
+                                  "inline-flex w-full items-center justify-center rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm",
+                                  selected ? "bg-sky-600 text-white" : "bg-slate-100 text-slate-800 hover:bg-slate-200",
+                                ].join(" ")}
+                              >
+                                {selected ? "Selected" : "Select"}
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             </fieldset>
 
             {/* Step 3: Payment */}
@@ -468,14 +592,7 @@ export default function SignUpClient() {
                     className="cursor-pointer rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
                   >
                     <span>Upload Screenshot</span>
-                    <input
-                      id="payment-proof-upload"
-                      name="payment-proof-upload"
-                      type="file"
-                      className="sr-only"
-                      accept="image/*"
-                      onChange={handlePaymentProofChange}
-                    />
+                    <input id="payment-proof-upload" name="payment-proof-upload" type="file" className="sr-only" accept="image/*" onChange={handlePaymentProofChange} />
                   </label>
                 </div>
               </div>
@@ -483,8 +600,10 @@ export default function SignUpClient() {
               {/* Disclaimer Box */}
               <div className="rounded-md bg-red-50 p-4 border border-red-200 text-center">
                 <p className="text-sm font-semibold text-red-800">
-                  Disclaimer: Make sure your transaction code is correct and the payment is real, there is no refund policy!
-                  <Link href={"/disclaimer"} className="font-bold text-black"> Click Here To Read Disclaimer</Link>
+                  Disclaimer: Make sure your transaction code is correct and the payment is real, there is no refund policy!{" "}
+                  <Link href={"/disclaimer"} className="font-bold text-black">
+                    Click Here To Read Disclaimer
+                  </Link>
                 </p>
               </div>
 
@@ -633,6 +752,17 @@ function UploadIcon(props: SVGProps<SVGSVGElement>) {
     <svg viewBox="0 0 24 24" fill="none" aria-hidden {...props}>
       <path d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
       <path d="M12 3v12m0 0l4-4m-4 4l-4-4" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function SearchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden {...props}>
+      <path
+        fillRule="evenodd"
+        d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
+        clipRule="evenodd"
+      />
     </svg>
   );
 }

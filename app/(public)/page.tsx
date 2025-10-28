@@ -9,29 +9,51 @@ import { useAuth } from "@/hooks/useAuth";
 import WhatsAppButton from "@/app/components/WhatsAppButton";
 import type { SVGProps } from "react";
 
+const BRAND = "Course Plex";
+
+/**
+  Terminology (UI → DB):
+  - Courses (UI) = bundles in DB (packages)
+  - Sub-courses (UI) = individual modules in DB (courses)
+*/
+
+/* ================== Types ================== */
 type PackagesMapRaw = Record<
   string,
   {
     name: string;
     price: number;
     imageUrl: string;
-    courseIds?: Record<string, boolean>;
+    courseIds?: Record<string, boolean>; // included sub-courses
     highlight: boolean;
     badge: string;
-    features?: string[];
+    features?: string[]; // legacy
   }
 >;
-type CoursesMap = Record<string, { title: string }>;
 
-type Package = {
+type SubCoursesMap = Record<
+  string,
+  {
+    title: string;
+    videos?: Record<string, { title: string; url: string }>;
+  }
+>;
+
+type CourseBundle = {
   id: string;
   name: string;
   price: number;
   imageUrl: string;
-  courseIds?: Record<string, boolean>;
+  subCourseIds?: Record<string, boolean>; // from courseIds in DB
   highlight: boolean;
   badge: string;
-  features?: string[];
+  subCourses?: string[]; // titles of included sub-courses
+};
+
+type SubCourse = {
+  id: string;
+  title: string;
+  videos?: Record<string, { title: string; url: string }>;
 };
 
 type MinimalUser = { uid: string } | null;
@@ -42,13 +64,16 @@ type HeroSection = {
 };
 
 type SiteMetrics = {
-  coursePackages?: number;
+  coursePackages?: number; // keep keys for compatibility
   skillCourses?: number;
   practicalLearning?: number;
 };
 
+/* ================== Page ================== */
 export default function Page() {
-  const [packages, setPackages] = useState<Package[]>([]);
+  const [courses, setCourses] = useState<CourseBundle[]>([]); // UI: Courses (DB: packages)
+  const [subCourses, setSubCourses] = useState<SubCourse[]>([]); // UI: Sub-courses (DB: courses)
+  const [topCourseIds, setTopCourseIds] = useState<string[]>([]); // from homepage/topPackageIds
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
 
@@ -56,7 +81,7 @@ export default function Page() {
   const [hero, setHero] = useState<HeroSection>({
     phone: "9779705726179",
     whatsappMessage:
-      "Hi! I’m interested in your course packages. Can you help me choose the best one?",
+      "Hi! I’m interested in your courses. Can you help me choose the best one?",
   });
   const [siteMetrics, setSiteMetrics] = useState<SiteMetrics>({
     coursePackages: 4,
@@ -64,31 +89,51 @@ export default function Page() {
     practicalLearning: 100,
   });
 
+  // Fetch Courses (packages) + Sub-courses (courses)
   useEffect(() => {
-    const fetchPackages = async () => {
+    const fetchData = async () => {
       try {
         const packagesRef = dbRef(database, "packages");
-        const coursesRef = dbRef(database, "courses");
-        const [packagesSnapshot, coursesSnapshot] = await Promise.all([
+        const subCoursesRef = dbRef(database, "courses");
+        const [packagesSnapshot, subCoursesSnapshot] = await Promise.all([
           get(packagesRef),
-          get(coursesRef),
+          get(subCoursesRef),
         ]);
 
         const packagesData = (packagesSnapshot.val() as PackagesMapRaw | null) ?? {};
-        const coursesData = (coursesSnapshot.val() as CoursesMap | null) ?? {};
+        const subCoursesData = (subCoursesSnapshot.val() as SubCoursesMap | null) ?? {};
 
-        const enrichedPackages: Package[] = Object.entries(packagesData).map(
+        const subCourseArray: SubCourse[] = Object.entries(subCoursesData).map(
+          ([id, c]) => ({
+            id,
+            title: c.title,
+            videos: c.videos || {},
+          })
+        );
+
+        const uiCourses: CourseBundle[] = Object.entries(packagesData).map(
           ([id, pkg]) => {
-            const featureList = pkg.courseIds
+            const subCourseTitles = pkg.courseIds
               ? Object.keys(pkg.courseIds).map(
-                  (courseId) => coursesData[courseId]?.title || "Unknown Course"
+                  (cid) => subCoursesData[cid]?.title || "Untitled Sub-course"
                 )
-              : pkg.features ?? [];
-            return { id, ...pkg, features: featureList };
+              : pkg.features ?? []; // fallback if legacy features exist
+
+            return {
+              id,
+              name: pkg.name,
+              price: pkg.price,
+              imageUrl: pkg.imageUrl,
+              subCourseIds: pkg.courseIds,
+              highlight: pkg.highlight,
+              badge: pkg.badge,
+              subCourses: subCourseTitles,
+            };
           }
         );
 
-        setPackages(enrichedPackages);
+        setSubCourses(subCourseArray);
+        setCourses(uiCourses);
       } catch (error) {
         console.error("Failed to fetch content:", error);
       } finally {
@@ -96,10 +141,10 @@ export default function Page() {
       }
     };
 
-    fetchPackages();
+    fetchData();
   }, []);
 
-  // Live updates for heroSection and siteMetrics
+  // Live updates: heroSection and siteMetrics
   useEffect(() => {
     const heroRef = dbRef(database, "heroSection");
     const siteMetricsRef = dbRef(database, "siteMetrics");
@@ -120,7 +165,9 @@ export default function Page() {
         skillCourses:
           typeof v.skillCourses === "number" ? v.skillCourses : prev.skillCourses,
         practicalLearning:
-          typeof v.practicalLearning === "number" ? v.practicalLearning : prev.practicalLearning,
+          typeof v.practicalLearning === "number"
+            ? v.practicalLearning
+            : prev.practicalLearning,
       }));
     });
 
@@ -130,54 +177,82 @@ export default function Page() {
     };
   }, []);
 
+  // Live selection for Featured Courses (homepage/topPackageIds)
+  useEffect(() => {
+    const topRef = dbRef(database, "homepage/topPackageIds");
+    const unsub = onValue(topRef, (snap) => {
+      const v = (snap.val() || {}) as Record<string, boolean>;
+      const ids = Object.entries(v)
+        .filter(([, enabled]) => !!enabled)
+        .map(([id]) => id);
+      setTopCourseIds(ids);
+    });
+    return () => unsub();
+  }, []);
+
   const normalizedWaPhone = useMemo(() => {
     const raw = hero.phone || "9779705726179";
-    // WhatsApp requires digits only: remove non-digits
     const digitsOnly = raw.replace(/[^\d]/g, "");
     return digitsOnly.length > 5 ? digitsOnly : "9779705726179";
   }, [hero.phone]);
 
+  const totalCoursesCount = courses.length || siteMetrics.coursePackages || 0;
+  const totalSubCoursesCount = subCourses.length || siteMetrics.skillCourses || 0;
+
+  // Only show featured courses selected in admin
+  const featuredCourseSet = new Set(topCourseIds);
+  const featuredCourses = courses.filter((c) => featuredCourseSet.has(c.id));
+
   return (
     <main className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-800 antialiased">
-      <section id="home" className="relative mx-auto max-w-7xl px-4 py-10 md:py-16">
+      {/* HERO */}
+      <section id="home" className="relative mx-auto w-full overflow-hidden">
         <Hero
           phoneLabel={hero.phone || "+977 970-572-6179"}
           metrics={{
-            coursePackages: siteMetrics.coursePackages ?? 4,
-            skillCourses: siteMetrics.skillCourses ?? 10,
+            totalCourses: totalCoursesCount,
+            totalSubCourses: totalSubCoursesCount,
             practicalLearning: siteMetrics.practicalLearning ?? 100,
           }}
         />
       </section>
 
-      <section className="relative bg-white py-10 pb-16 md:py-14 md:pb-24">
+      {/* FEATURED COURSES ONLY */}
+      <section className="relative z-10 bg-white py-12 sm:py-16">
         <div className="mx-auto max-w-7xl px-4">
-          <Steps />
-          <About
-            metrics={{
-              coursePackages: siteMetrics.coursePackages ?? 4,
-              skillCourses: siteMetrics.skillCourses ?? 10,
-              practicalLearning: siteMetrics.practicalLearning ?? 100,
-            }}
-          />
-          <header className="mx-auto mt-16 max-w-3xl px-2 text-center">
-            <div className="mx-auto mb-4 inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 text-sm font-semibold text-sky-700 ring-1 ring-sky-200">
+          <header className="mx-auto max-w-3xl text-center">
+            <div className="mx-auto mb-4 inline-flex items-center gap-2 rounded-full bg-violet-50 px-3 py-1 text-sm font-semibold text-violet-700 ring-1 ring-violet-200">
               <SparkleIcon className="h-5 w-5" />
-              Learning Packages
+              Featured Courses
             </div>
             <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
-              Choose Your Learning Path
+              Master complete tracks
             </h2>
             <p className="mt-3 text-base text-slate-600 sm:text-lg">
-              Flexible packages designed to accelerate your growth.
+              Each course is a bundle of sub-courses like Frontend, Backend, and Database.
             </p>
           </header>
-          <Pricing
-            tiers={packages}
+
+          <FeaturedCoursesGrid
+            courses={featuredCourses}
             loading={loading}
             user={user ? { uid: user.uid } : null}
           />
+
+          <div className="mt-10 text-center">
+            <Link
+              href="/courses"
+              className="inline-flex items-center justify-center rounded-full bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
+            >
+              Browse All Courses
+            </Link>
+          </div>
         </div>
+      </section>
+
+      {/* WHY US */}
+      <section className="relative z-10 mx-auto max-w-7xl px-4 pb-12">
+        <WhyUs />
       </section>
 
       {/* Floating WhatsApp Button */}
@@ -185,196 +260,320 @@ export default function Page() {
         phone={normalizedWaPhone}
         message={
           hero.whatsappMessage ||
-          "Hi! I’m interested in your course packages. Can you help me choose the best one?"
+          "Hi! I’m interested in your courses. Can you help me choose the best one?"
         }
       />
     </main>
   );
 }
 
-/* ================== Pricing ================== */
-function Pricing({
-  tiers,
-  loading,
-  user,
-}: {
-  tiers: Package[];
-  loading: boolean;
-  user: MinimalUser;
-}) {
-  if (loading)
-    return <div className="p-8 text-center text-slate-500">Loading packages...</div>;
-
-  return (
-    <div
-      id="packages"
-      className="mx-auto mt-12 grid max-w-7xl gap-8 px-1 sm:grid-cols-2 lg:grid-cols-3"
-    >
-      {tiers.map((t) => {
-        const buttonHref = user
-          ? `/user/upgrade-course?packageId=${encodeURIComponent(t.id)}`
-          : `/signup?packageId=${encodeURIComponent(t.id)}`;
-        const buttonText = user ? "Upgrade Now" : "Enroll Now";
-
-        return (
-          <div
-            key={t.id}
-            className={[
-              "group relative flex flex-col overflow-hidden rounded-2xl bg-white shadow-sm transition-shadow duration-300",
-              t.highlight ? "ring-2 ring-sky-500" : "hover:shadow-lg ring-1 ring-slate-200",
-            ].join(" ")}
-          >
-            <div className="relative h-48 w-full">
-              {t.imageUrl && (
-                <Image src={t.imageUrl} alt={t.name} fill className="object-cover" />
-              )}
-              {t.badge && (
-                <div className="absolute top-4 right-4">
-                  <span className="rounded-full bg-sky-600 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-white shadow-md">
-                    {t.badge}
-                  </span>
-                </div>
-              )}
-            </div>
-            <div className="p-6 flex flex-col flex-grow">
-              <h3 className="text-xl font-bold text-slate-900">{t.name}</h3>
-              <div className="mt-2 flex items-baseline gap-1">
-                <span className="text-3xl font-extrabold tracking-tight">
-                  Rs {(t.price || 0).toLocaleString()}
-                </span>
-                <span className="text-sm text-slate-500">/ lifetime</span>
-              </div>
-              <ul className="mt-6 space-y-3 text-sm text-slate-700 flex-grow">
-                {t.features?.map((f, idx) => (
-                  <li key={`${f}-${idx}`} className="flex items-start gap-3">
-                    <CheckIcon className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
-                    <span>{f}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-8">
-                <Link
-                  href={buttonHref}
-                  className={[
-                    "inline-flex w-full items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold shadow-sm transition",
-                    t.highlight
-                      ? "bg-sky-600 text-white hover:bg-sky-700"
-                      : "bg-sky-50 text-sky-800 hover:bg-sky-100",
-                  ].join(" ")}
-                >
-                  {buttonText}
-                </Link>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-/* ================== Hero and other components ================== */
+/* ================== Hero ================== */
 function Hero({
   phoneLabel,
   metrics,
 }: {
   phoneLabel: string;
-  metrics: { coursePackages: number; skillCourses: number; practicalLearning: number };
+  metrics: { totalCourses: number; totalSubCourses: number; practicalLearning: number };
 }) {
   return (
-    <div className="relative overflow-hidden rounded-3xl bg-white shadow-xl">
-      <HeroDecor />
-      <div className="relative z-10 grid items-center gap-10 px-4 py-10 sm:px-6 sm:py-12 md:grid-cols-2 md:px-10 md:py-20">
-        <div>
-          <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
-            <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 ring-1 ring-emerald-200">
-              <StatusDot className="h-2 w-2 text-emerald-500" /> Ready To Work
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700 ring-1 ring-sky-200">
-              <PhoneIcon className="h-3.5 w-3.5" /> {phoneLabel}
-            </span>
+    <div className="relative mx-auto max-w-7xl px-4 py-12 sm:py-16">
+      <div className="relative overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-slate-200">
+        <HeroDecor />
+
+        <div className="relative z-10 grid items-center gap-10 px-5 py-10 sm:px-8 md:grid-cols-2 md:py-16 lg:px-12">
+          {/* Left: Content */}
+          <div>
+            <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
+              <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 ring-1 ring-emerald-200">
+                <StatusDot className="h-2 w-2 text-emerald-500" />
+                Full learning tracks
+              </span>
+              <span className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 font-medium text-indigo-700 ring-1 ring-indigo-200">
+                <PhoneIcon className="h-3.5 w-3.5" />
+                {phoneLabel}
+              </span>
+            </div>
+
+            <h1 className="mt-4 text-4xl font-black leading-[1.1] tracking-tight sm:text-5xl md:text-6xl">
+              {BRAND} —{" "}
+              <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
+                Learn complete skills, step by step
+              </span>
+            </h1>
+
+            <p className="mt-4 max-w-xl text-base text-slate-600 sm:text-lg">
+              Choose a Course like Website Development, then progress through Sub-courses:
+              Frontend, Backend, Database — all in one place.
+            </p>
+
+            <div className="mt-7 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
+              <Link
+                href="/courses"
+                className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-indigo-600 to-fuchsia-600 px-6 py-3 text-base font-semibold text-white shadow-sm hover:brightness-110"
+              >
+                Browse Courses
+              </Link>
+              <Link
+                href="/signup"
+                className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Become an Affiliate
+              </Link>
+            </div>
+
+            {/* Metrics */}
+            <dl className="mt-8 grid grid-cols-3 gap-3 text-center text-sm text-slate-600 sm:text-base">
+              <MetricCard value={`${metrics.totalCourses}+`} label="Courses" />
+              <MetricCard value={`${metrics.totalSubCourses}+`} label="Sub-courses" />
+              <MetricCard value={`${metrics.practicalLearning}%`} label="Practical Learning" />
+            </dl>
           </div>
-          <h1 className="mt-4 text-4xl font-black leading-[1.15] tracking-tight sm:text-5xl md:text-6xl">
-            Skill Hub Nepal —{" "}
-            <span className="bg-gradient-to-r from-sky-600 to-fuchsia-600 bg-clip-text text-transparent">
-              Digital Marketing Courses
-            </span>
-          </h1>
-          <p className="mt-4 max-w-xl text-base text-slate-600 sm:text-lg">
-            Master real-world digital skills through curated packages — from fundamentals to advanced strategies.
-          </p>
-          <div className="mt-7 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-            <Link
-              href="#packages"
-              className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-600 to-cyan-600 px-6 py-3 text-base font-semibold text-white shadow-sm"
-            >
-              Explore Our Packages
-            </Link>
+
+          {/* Right: Media (working images via next.config.js) */}
+          <div className="relative h-full">
+            <HeroMedia />
           </div>
-          <dl className="mt-8 grid grid-cols-3 gap-4 text-center text-sm text-slate-600 sm:text-base">
-            <div>
-              <dt className="font-semibold text-slate-900">{metrics.coursePackages}+</dt>
-              <dd>Course Packages</dd>
-            </div>
-            <div>
-              <dt className="font-semibold text-slate-900">{metrics.skillCourses}+</dt>
-              <dd>Skill Courses</dd>
-            </div>
-            <div>
-              <dt className="font-semibold text-slate-900">{metrics.practicalLearning}%</dt>
-              <dd>Practical Learning</dd>
-            </div>
-          </dl>
-        </div>
-        <div className="relative h-full">
-          <HeroImage />
         </div>
       </div>
     </div>
   );
 }
 
-function HeroImage() {
+function HeroMedia() {
   return (
-    <div className="relative h-full w-full aspect-[4/3] md:aspect-auto">
-      <Image
-        src="https://images.unsplash.com/photo-1556761175-5973dc0f32e7?q=80&w=1932&auto=format&fit=crop"
-        alt="Instructor guiding a student"
-        fill
-        className="rounded-2xl object-cover shadow-lg"
-        priority
-      />
-    </div>
-  );
-}
-function HeroDecor() {
-  return (
-    <div aria-hidden className="absolute inset-0">
-      <div className="absolute inset-0 bg-gradient-to-b from-sky-50 via-white to-slate-50" />
-      <div className="absolute -left-24 -top-32 h-[320px] w-[320px] -rotate-12 rounded-[48px] bg-gradient-to-tr from-sky-100 to-emerald-100 blur-2xl sm:h-[420px] sm:w-[420px]" />
-      <div className="absolute -right-16 -bottom-20 h-[360px] w-[360px] rotate-12 rounded-[56px] bg-gradient-to-br from-fuchsia-100 to-sky-100 blur-2xl sm:h-[520px] sm:w-[520px]" />
-      <div className="absolute inset-x-3 top-3 bottom-3 rounded-2xl bg-slate-100/60 sm:inset-x-6 sm:top-6 sm:bottom-6" />
+    <div className="relative mx-auto w-full max-w-xl">
+      {/* Main image */}
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl shadow-xl ring-1 ring-slate-200">
+        <Image
+          src="https://images.unsplash.com/photo-1584697964199-2942b27f67d3?q=80&w=1920&auto=format&fit=crop"
+          alt="Learning online with a laptop"
+          fill
+          className="object-cover"
+          priority
+        />
+        <div className="pointer-events-none absolute left-4 top-4 inline-flex items-center gap-2 rounded-full bg-white/85 px-3 py-1 text-xs font-semibold text-slate-700 backdrop-blur">
+          <PlayIcon className="h-4 w-4 text-fuchsia-600" /> Learn anywhere
+        </div>
+      </div>
+
+      {/* Floating cards */}
+      <div className="pointer-events-none absolute -left-6 -bottom-6 h-28 w-40 overflow-hidden rounded-xl bg-white shadow-md ring-1 ring-slate-200 sm:-left-10 sm:-bottom-8 sm:h-32 sm:w-48">
+        <Image
+          src="https://images.unsplash.com/photo-1513258496099-48168024aec0?q=80&w=1200&auto=format&fit=crop"
+          alt="Collaborative study"
+          fill
+          className="object-cover"
+        />
+      </div>
+      <div className="pointer-events-none absolute -right-6 -top-6 h-28 w-40 overflow-hidden rounded-xl bg-white shadow-md ring-1 ring-slate-200 sm:-right-10 sm:-top-10 sm:h-32 sm:w-48">
+        <Image
+          src="https://images.unsplash.com/photo-1606761568499-6d2451b23c56?q=80&w=1200&auto=format&fit=crop"
+          alt="Tech analytics"
+          fill
+          className="object-cover"
+        />
+      </div>
     </div>
   );
 }
 
-function Steps() {
-  const items = [
-    { num: "01", title: "Explore Package", desc: "Discover what fits your goals.", color: "from-orange-400 to-pink-500" },
-    { num: "02", title: "Learn Package", desc: "Master the fundamentals.", color: "from-sky-500 to-cyan-500" },
-    { num: "03", title: "Apply Package", desc: "Start building projects.", color: "from-violet-500 to-indigo-500" },
-    { num: "04", title: "Achieve Package", desc: "Advance your career.", color: "from-emerald-500 to-teal-500" },
-  ];
+function HeroDecor() {
   return (
-    <div id="services" className="mx-auto -mt-4 max-w-5xl rounded-2xl bg-white p-4 shadow-lg sm:-mt-8 md:-mt-12 md:p-6">
-      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
-        {items.map((s) => (
-          <div key={s.num} className="rounded-xl bg-white p-5 shadow-sm transition hover:shadow-md">
-            <div className={`inline-flex rounded-full bg-gradient-to-r ${s.color} px-3 py-1 text-xs font-bold text-white shadow-sm`}>
-              {s.num}
+    <div aria-hidden className="absolute inset-0">
+      {/* Gradient */}
+      <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-white to-sky-50" />
+      {/* Glow blobs */}
+      <div className="absolute -left-24 -top-32 h-[360px] w-[360px] -rotate-12 rounded-[48px] bg-gradient-to-tr from-indigo-100 to-fuchsia-100 blur-2xl sm:h-[420px] sm:w-[420px]" />
+      <div className="absolute -right-16 -bottom-20 h-[380px] w-[380px] rotate-12 rounded-[56px] bg-gradient-to-br from-fuchsia-100 to-sky-100 blur-2xl sm:h-[520px] sm:w-[520px]" />
+      {/* Inner frame */}
+      <div className="absolute inset-x-3 top-3 bottom-3 rounded-2xl bg-white/60 ring-1 ring-slate-100 sm:inset-x-6 sm:top-6 sm:bottom-6" />
+    </div>
+  );
+}
+
+/* ================== Featured Courses Grid ================== */
+function FeaturedCoursesGrid({
+  courses,
+  loading,
+  user,
+}: {
+  courses: CourseBundle[];
+  loading: boolean;
+  user: MinimalUser;
+}) {
+  if (loading) {
+    return <div className="p-8 text-center text-slate-500">Loading courses...</div>;
+  }
+
+  if (!courses.length) {
+    return (
+      <div className="mx-auto mt-8 max-w-2xl rounded-2xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-600">
+        No featured courses yet. Select courses in admin under “Homepage: Featured Courses”.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto mt-8 grid max-w-7xl gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {courses.map((course) => (
+        <CourseCard key={course.id} course={course} user={user} />
+      ))}
+    </div>
+  );
+}
+
+/* ================== Course Card ================== */
+function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser }) {
+  const enrollHref = user
+    ? `/user/upgrade-course?packageId=${encodeURIComponent(course.id)}`
+    : `/signup?packageId=${encodeURIComponent(course.id)}`;
+  const enrollText = user ? "Upgrade Now" : "Enroll Now";
+
+  const subTitles = course.subCourses || [];
+  const extra = Math.max(0, subTitles.length - 4);
+
+  return (
+    <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
+      {/* Cover */}
+      <div className="relative h-48 w-full">
+        {course.imageUrl ? (
+          <Image src={course.imageUrl} alt={course.name} fill className="object-cover" />
+        ) : (
+          <Image
+            src="https://images.unsplash.com/photo-1553877522-43269d4ea984?q=80&w=1600&auto=format&fit=crop"
+            alt={course.name}
+            fill
+            className="object-cover"
+          />
+        )}
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent" />
+        {(course.badge || course.highlight) && (
+          <div className="absolute top-4 right-4">
+            <span
+              className={[
+                "rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider text-white shadow-md",
+                course.highlight ? "bg-indigo-600" : "bg-slate-800/80",
+              ].join(" ")}
+            >
+              {course.badge || "Popular"}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Body */}
+      <div className="flex flex-1 flex-col p-5">
+        <h3 className="text-lg font-bold text-slate-900">{course.name}</h3>
+
+        {/* Sub-courses chips */}
+        {!!subTitles.length && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {subTitles.slice(0, 4).map((title, idx) => (
+              <span
+                key={`${title}-${idx}`}
+                className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-200"
+              >
+                {title}
+              </span>
+            ))}
+            {extra > 0 && (
+              <span className="inline-flex items-center rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200">
+                +{extra} more
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Price */}
+        <div className="mt-4 flex items-baseline gap-1">
+          <span className="text-3xl font-extrabold tracking-tight">
+            Rs {(course.price || 0).toLocaleString()}
+          </span>
+          <span className="text-sm text-slate-500">/ lifetime</span>
+        </div>
+
+        {/* Perks */}
+        <div className="mt-5 flex items-center justify-between text-xs text-slate-500">
+          <span className="inline-flex items-center gap-1">
+            <ShieldIcon className="h-4 w-4 text-indigo-600" /> Lifetime Access
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <StarIcon className="h-4 w-4 text-amber-500" /> Mentor Support
+          </span>
+        </div>
+
+        {/* CTA */}
+        <div className="mt-6">
+          <Link
+            href={enrollHref}
+            className={[
+              "inline-flex w-full items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold shadow-sm transition",
+              course.highlight
+                ? "bg-indigo-600 text-white hover:bg-indigo-700"
+                : "bg-indigo-50 text-indigo-800 hover:bg-indigo-100",
+            ].join(" ")}
+          >
+            {enrollText}
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ================== Why Us ================== */
+function WhyUs() {
+  const items = [
+    {
+      title: "Project-first",
+      desc: "Build portfolio-worthy projects while you learn.",
+      icon: LightningIcon,
+      color: "from-indigo-500 to-fuchsia-500",
+    },
+    {
+      title: "Mentor Support",
+      desc: "Get feedback and stay unblocked with expert help.",
+      icon: UsersIcon,
+      color: "from-emerald-500 to-teal-500",
+    },
+    {
+      title: "Career Ready",
+      desc: "From sub-courses to full tracks that map to real roles.",
+      icon: ShieldIcon,
+      color: "from-amber-500 to-orange-500",
+    },
+    {
+      title: "Lifetime Access",
+      desc: "Rewatch lessons and updates anytime.",
+      icon: ClockIcon,
+      color: "from-violet-500 to-indigo-500",
+    },
+  ];
+
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+      <div className="mx-auto max-w-3xl text-center">
+        <h3 className="text-2xl font-extrabold sm:text-3xl">Why learn with {BRAND}?</h3>
+        <p className="mt-2 text-slate-600">
+          Structured Courses built from focused Sub-courses, designed for real outcomes.
+        </p>
+      </div>
+
+      <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {items.map((it) => (
+          <div
+            key={it.title}
+            className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
+          >
+            <div
+              className={`inline-flex rounded-full bg-gradient-to-r ${it.color} px-3 py-1 text-xs font-bold text-white shadow-sm`}
+            >
+              {it.title}
             </div>
-            <h3 className="mt-3 text-base font-semibold">{s.title}</h3>
-            <p className="mt-1 text-sm text-slate-600 sm:text-base">{s.desc}</p>
+            <p className="mt-3 text-sm text-slate-600">{it.desc}</p>
+            <div className="pointer-events-none absolute -right-3 -bottom-3 opacity-20 transition group-hover:opacity-30">
+              <it.icon className="h-16 w-16 text-slate-400" />
+            </div>
           </div>
         ))}
       </div>
@@ -382,67 +581,17 @@ function Steps() {
   );
 }
 
-function About({
-  metrics,
-}: {
-  metrics: { coursePackages: number; skillCourses: number; practicalLearning: number };
-}) {
+/* ================== Small Components ================== */
+function MetricCard({ value, label }: { value: string; label: string }) {
   return (
-    <section
-      id="about"
-      className="mx-auto mt-14 grid max-w-6xl items-center gap-8 rounded-2xl bg-white p-5 shadow-lg sm:p-6 md:grid-cols-2 md:p-8"
-    >
-      <div className="order-2 md:order-1">
-        <span className="text-sm font-bold tracking-wide text-sky-600">ABOUT US</span>
-        <h3 className="mt-3 text-2xl font-extrabold sm:text-3xl">
-          Skill Hub Nepal — Your Digital Marketing{" "}
-          <span className="text-sky-600">Learning Partner</span>
-        </h3>
-        <div className="mt-5 grid grid-cols-3 gap-3 text-center">
-          <Metric value={`${metrics.coursePackages}+`} label="Course Packages" />
-          <Metric value={`${metrics.skillCourses}+`} label="Skill Courses" />
-          <Metric value={`${metrics.practicalLearning}%`} label="Practical Learning" />
-        </div>
-        <p className="mt-4 text-base text-slate-600">
-          We provide comprehensive digital marketing training with packages ranging from basic to advanced levels.
-        </p>
-        <Link
-          href="#packages"
-          className="mt-6 inline-flex items-center rounded-full bg-gradient-to-r from-sky-600 to-cyan-600 px-5 py-2.5 text-sm font-semibold text-white"
-        >
-          Explore Packages
-        </Link>
-      </div>
-      <div className="order-1 md:order-2">
-        <AboutImage />
-      </div>
-    </section>
-  );
-}
-
-function AboutImage() {
-  return (
-    <div className="relative w-full aspect-video">
-      <Image
-        src="https://images.unsplash.com/photo-1522202176988-66273c2fd55f?q=80&w=2071&auto=format&fit=crop"
-        alt="A diverse group of students collaborating"
-        fill
-        className="rounded-2xl object-cover shadow-lg"
-      />
-    </div>
-  );
-}
-
-function Metric({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="rounded-lg bg-slate-50 p-3 shadow-sm">
+    <div className="rounded-xl bg-white/70 p-3 shadow-sm ring-1 ring-slate-200 backdrop-blur">
       <div className="text-xl font-bold text-slate-900">{value}</div>
-      <div className="text-sm text-slate-600">{label}</div>
+      <div className="text-xs text-slate-600">{label}</div>
     </div>
   );
 }
 
-/* Icons */
+/* ================== Icons ================== */
 function StatusDot(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 8 8" fill="currentColor" aria-hidden {...props}>
@@ -473,6 +622,48 @@ function CheckIcon(props: SVGProps<SVGSVGElement>) {
         d="M16.707 5.293a1 1 0 010 1.414l-7.25 7.25a1 1 0 01-1.414 0L3.293 9.207a1 1 0 011.414-1.414l3.043 3.043 6.543-6.543a1 1 0 011.414 0z"
         clipRule="evenodd"
       />
+    </svg>
+  );
+}
+function ShieldIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M12 2l8 4v6c0 5-3.5 9.74-8 10-4.5-.26-8-5-8-10V6l8-4z" />
+    </svg>
+  );
+}
+function StarIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M12 2l2.9 6.1L22 9.2l-5 4.9 1.2 6.9L12 17.8 5.8 21l1.2-6.9-5-4.9 7.1-1.1L12 2z" />
+    </svg>
+  );
+}
+function PlayIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M8 5v14l11-7L8 5z" />
+    </svg>
+  );
+}
+function LightningIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" />
+    </svg>
+  );
+}
+function UsersIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M16 11c1.93 0 3.5-1.79 3.5-4S17.93 3 16 3s-3.5 1.79-3.5 4 1.57 4 3.5 4zM8 11c1.93 0 3.5-1.79 3.5-4S9.93 3 8 3 4.5 4.79 4.5 7 6.07 11 8 11zm8 2c-2.33 0-7 1.17-7 3.5V20h14v-3.5C23 14.17 18.33 13 16 13zM8 13c-.29 0-.62.02-.97.05C4.68 13.27 3 14.28 3 15.5V20h5v-3.5c0-1.48.99-2.52 2.4-3.2C9.67 13.12 8.81 13 8 13z" />
+    </svg>
+  );
+}
+function ClockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M12 2a10 10 0 1010 10A10.011 10.011 0 0012 2zm1 11h4v-2h-3V7h-2v6z" />
     </svg>
   );
 }

@@ -16,12 +16,12 @@ export default function Footer() {
             <Link href="/" className="inline-flex items-center gap-2">
               <Image
                 className="h-8 w-auto"
-                src={"/images/skillhubnepallogo.png"}
-                alt="Skill Hub Nepal Logo"
+                src={"/images/courseplexlogo.png"}
+                alt="Course Plex Logo"
                 height={40}
                 width={40}
               />
-              <span className="text-lg font-semibold text-white">Skill Hub Nepal</span>
+              <span className="text-lg font-semibold text-white">Course Plex</span>
             </Link>
             <p className="mt-3 text-base">Learn, apply, and grow your digital marketing career.</p>
             <p className="mt-6 text-sm">
@@ -61,7 +61,7 @@ export default function Footer() {
 
         {/* Bottom bar */}
         <div className="mt-10 flex flex-col items-center justify-between gap-4 border-t border-slate-800 pt-6 sm:flex-row">
-          <p className="text-xs">© {year} Skill Hub Nepal. All rights reserved.</p>
+          <p className="text-xs">© {year} Course Plex. All rights reserved.</p>
           <div className="flex items-center gap-4">
             <button // Use a button for actions
               onClick={(e) => {

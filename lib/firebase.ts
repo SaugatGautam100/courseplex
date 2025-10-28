@@ -6,14 +6,14 @@ import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 // Public env vars (NEXT_PUBLIC_...) must all be set
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY!,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN!,
-  databaseURL: "https://saugat-firebase1-default-rtdb.firebaseio.com",
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET!,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID!,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID!,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey: "AIzaSyCFdDAIC_2APnckuwTMX2boQGlJU5arAGQ",
+  authDomain: "saugat-whatsapp-clone.firebaseapp.com",
+  databaseURL: "https://saugat-whatsapp-clone-default-rtdb.firebaseio.com",
+  projectId: "saugat-whatsapp-clone",
+  storageBucket: "saugat-whatsapp-clone.firebasestorage.app",
+  messagingSenderId: "22501273955",
+  appId: "1:22501273955:web:cbc4f3f6b60200954e2356",
+  measurementId: "G-QYZ76LZMDB"
 };
 
 const isBrowser = typeof window !== "undefined";

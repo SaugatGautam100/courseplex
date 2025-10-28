@@ -1,4 +1,3 @@
-// app/user/components/UserSidebar.tsx
 "use client";
 
 import Link from "next/link";
@@ -24,12 +23,14 @@ interface UserSidebarProps {
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/user/dashboard", icon: DashboardIcon },
   { label: "Study Page", href: "/user/study-page", icon: BookIcon },
-  { label: "Upgrade Course", href: "/user/upgrade-course", icon: RocketIcon },
+  { label: "Buy More Courses", href: "/user/upgrade-course", icon: RocketIcon },
   { label: "Leaderboard", href: "/user/leaderboard", icon: TrophyIcon },
   { label: "Affiliate", href: "/user/affiliate", icon: UsersIcon },
   { label: "Transactions", href: "/user/transactions", icon: ReceiptIcon },
   { label: "Withdrawal", href: "/user/withdraw", icon: WalletIcon },
   { label: "KYC", href: "/user/kyc", icon: IdCardIcon },
+  // New: Edit Profile
+  { label: "Edit Profile", href: "/user/profile", icon: EditIcon },
 ];
 
 export default function UserSidebar({ onNavClick }: UserSidebarProps) {
@@ -190,6 +191,13 @@ function UserIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" {...props}>
       <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a5.99 5.99 0 00-4.793 2.39A6.483 6.483 0 0010 16.5a6.483 6.483 0 004.793-2.11A5.99 5.99 0 0010 12z" clipRule="evenodd" />
+    </svg>
+  );
+}
+function EditIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536M9 13l6.232-6.232a2 2 0 112.828 2.828L11.828 15.828A2 2 0 0110.414 16H9v-1.414a2 2 0 01.586-1.414z" />
     </svg>
   );
 }

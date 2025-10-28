@@ -21,6 +21,7 @@ type Order = {
   createdAt: string;
   email: string;
   commissionAmount?: number;
+  cashbackAmount?: number; // cashback for the customer
   paymentProofUrl?: string;
 };
 type OrderDB = Partial<Omit<Order, "id">>;
@@ -33,7 +34,7 @@ type User = {
   imageUrl?: string;
   courseId?: string;
   status?: string;
-  totalEarnings?: number; // NEW: lifetime earnings
+  totalEarnings?: number;
   balance?: number;
   specialAccess?: {
     active?: boolean;
@@ -63,13 +64,20 @@ type EnrichedOrder = Order & {
   referrerName?: string;
   coursePrice?: number;
   customerImageUrl?: string;
-  referrerSpecialPct?: number; // only present when special is ACTIVE currently
+  referrerSpecialPct?: number; // display-only
 };
 
 const formatCurrency = (n?: number) => (n != null && isFinite(n) ? `Rs ${n.toLocaleString()}` : "N/A");
 const startOfTodayTs = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
 const startOfWeekTs = () => { const now = new Date(); const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()); d.setHours(0, 0, 0, 0); return d.getTime(); };
 const startOfMonthTs = () => { const now = new Date(); const d = new Date(now.getFullYear(), now.getMonth(), 1); d.setHours(0, 0, 0, 0); return d.getTime(); };
+
+// Force numeric coercion for DB values
+const toNumber = (v: unknown) => {
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  const n = Number(v);
+  return isFinite(n) ? n : 0;
+};
 
 export default function AdminOrdersPage() {
   const [allOrders, setAllOrders] = useState<EnrichedOrder[]>([]);
@@ -102,8 +110,8 @@ export default function AdminOrdersPage() {
           imageUrl: u.imageUrl ? String(u.imageUrl) : undefined,
           courseId: u.courseId ? String(u.courseId) : undefined,
           status: u.status ? String(u.status) : undefined,
-          totalEarnings: typeof u.totalEarnings === "number" ? u.totalEarnings : 0, // NEW
-          balance: typeof u.balance === "number" ? u.balance : 0,
+          totalEarnings: toNumber(u.totalEarnings),
+          balance: toNumber(u.balance),
           specialAccess: u.specialAccess || undefined,
         };
       });
@@ -114,12 +122,12 @@ export default function AdminOrdersPage() {
         pkMap[pid] = {
           id: pid,
           name: String(p.name || ""),
-          price: typeof p.price === "number" ? p.price : Number(p.price || 0),
+          price: toNumber(p.price),
           imageUrl: p.imageUrl || "",
           highlight: Boolean(p.highlight),
           badge: p.badge || "",
           features: Array.isArray(p.features) ? p.features : undefined,
-          commissionPercent: typeof p.commissionPercent === "number" ? p.commissionPercent : 58,
+          commissionPercent: typeof p.commissionPercent === "number" ? p.commissionPercent : toNumber(p.commissionPercent) || 58,
         };
       });
       setAllPackages(pkMap);
@@ -138,7 +146,8 @@ export default function AdminOrdersPage() {
           referrerId: order.referrerId ? String(order.referrerId) : undefined,
           createdAt: String(order.createdAt || new Date().toISOString()),
           email: String(order.email || ""),
-          commissionAmount: typeof order.commissionAmount === "number" ? order.commissionAmount : undefined,
+          commissionAmount: typeof order.commissionAmount === "number" ? order.commissionAmount : toNumber(order.commissionAmount) || undefined,
+          cashbackAmount: typeof order.cashbackAmount === "number" ? order.cashbackAmount : toNumber(order.cashbackAmount) || undefined,
           paymentProofUrl: order.paymentProofUrl,
         };
 
@@ -149,10 +158,14 @@ export default function AdminOrdersPage() {
 
         const refU = base.referrerId ? usersData[base.referrerId] : undefined;
         const refName = base.referrerId && refU ? String(refU?.name || "") : undefined;
-        const price = base.courseId && packagesData[base.courseId]?.price ? Number(packagesData[base.courseId]?.price) : undefined;
+
+        const price = base.courseId && packagesData[base.courseId]?.price
+          ? toNumber(packagesData[base.courseId]?.price)
+          : undefined;
+
         const customerImageUrl = base.userId && usersData[base.userId]?.imageUrl ? String(usersData[base.userId].imageUrl) : undefined;
 
-        // Only show the special% badge if special access is ACTIVE now
+        // Display-only special badge
         const sa = refU?.specialAccess;
         const referrerSpecialPct =
           sa && sa.active !== false && typeof sa.commissionPercent === "number"
@@ -161,8 +174,8 @@ export default function AdminOrdersPage() {
 
         return {
           ...base,
-          customerName: displayName, // override with live
-          email: displayEmail,       // override with live
+          customerName: displayName,
+          email: displayEmail,
           referrerName: refName,
           coursePrice: price,
           customerImageUrl,
@@ -215,11 +228,12 @@ export default function AdminOrdersPage() {
   };
 
   const handleApproveOrder = async (order: EnrichedOrder) => {
-    if (!window.confirm("Approve this request? This will activate/upgrade the user and award commission.")) return;
+    if (!window.confirm("Approve this request? This will activate/upgrade the user, award commission, and apply cashback.")) return;
     try {
       const updates: Record<string, unknown> = {};
       const isUpgrade = typeof order.product === "string" && order.product.startsWith("Upgrade");
 
+      // Basic order/user state updates
       updates[`/orders/${order.id}/status`] = "Completed";
       if (isUpgrade) {
         updates[`/users/${order.userId}/courseId`] = order.courseId;
@@ -228,69 +242,71 @@ export default function AdminOrdersPage() {
         if (order.courseId) updates[`/users/${order.userId}/courseId`] = order.courseId;
       }
 
-      // Commission calculation
-      let commissionAmount = 0;
-      // Ensure we have purchased package price (fallback if not enriched)
-      let purchasedPackagePrice = order.coursePrice;
+      // Determine purchased package price
+      let purchasedPackagePrice = toNumber(order.coursePrice);
       if (!purchasedPackagePrice) {
         const pkgSnap = await get(dbRef(database, `packages/${order.courseId}`));
-        if (pkgSnap.exists()) purchasedPackagePrice = Number(pkgSnap.val()?.price || 0);
+        if (pkgSnap.exists()) purchasedPackagePrice = toNumber(pkgSnap.val()?.price);
       }
 
-      if (order.referrerId && purchasedPackagePrice && purchasedPackagePrice > 0) {
+      // Referral commission (course-defined percent) + 10% cashback to the customer
+      let commissionAmount = 0;
+      let cashbackAmount = 0;
+      const cashbackPct = 10;
+
+      if (purchasedPackagePrice > 0 && order.referrerId) {
+        // Commission percent strictly from the course
+        let coursePct = allPackages[order.courseId]?.commissionPercent;
+        if (typeof coursePct !== "number") {
+          // try from DB
+          const pkgSnap = await get(dbRef(database, `packages/${order.courseId}`));
+          coursePct = pkgSnap.exists() ? toNumber(pkgSnap.val()?.commissionPercent) : 58;
+        }
+        if (!coursePct || coursePct <= 0) coursePct = 58;
+
+        // Referrer commission = coursePct% of purchased package price (no caps/mins)
+        commissionAmount = Math.floor(purchasedPackagePrice * (coursePct / 100));
+
+        // Credit commission to referrer
         const refSnap = await get(dbRef(database, `users/${order.referrerId}`));
         if (refSnap.exists()) {
-          const refData = refSnap.val();
+          const d = refSnap.val() || {};
+          const today = startOfTodayTs();
+          const week = startOfWeekTs();
+          const month = startOfMonthTs();
 
-          // Referrer's own package price (for non-special only)
-          let referrerPackagePrice = 0;
-          if (refData?.courseId) {
-            const refPkgSnap = await get(dbRef(database, `packages/${refData.courseId}`));
-            if (refPkgSnap.exists()) referrerPackagePrice = Number(refPkgSnap.val().price || 0);
-          }
+          const lastDailyReset = toNumber(d.lastDailyReset);
+          const lastWeeklyReset = toNumber(d.lastWeeklyReset);
+          const lastMonthlyReset = toNumber(d.lastMonthlyReset);
 
-          // Default percent from purchased package
-          const defaultPct = allPackages[order.courseId]?.commissionPercent ?? 58;
+          const dailyBase = lastDailyReset >= today ? toNumber(d.dailyEarnings) : 0;
+          const weeklyBase = lastWeeklyReset >= week ? toNumber(d.weeklyEarnings) : 0;
+          const monthlyBase = lastMonthlyReset >= month ? toNumber(d.monthlyEarnings) : 0;
 
-          const specialActive =
-            refData?.specialAccess &&
-            refData.specialAccess.active !== false &&
-            typeof refData.specialAccess.commissionPercent === "number";
-
-          const pct = specialActive ? Number(refData.specialAccess.commissionPercent) : defaultPct;
-
-          // Base rule:
-          // - If special is active: base = purchased package price (no cap)
-          // - If not special: base = min(referrer's package price, purchased package price)
-          const commissionBasePrice = specialActive
-            ? purchasedPackagePrice
-            : Math.min(referrerPackagePrice, purchasedPackagePrice);
-
-          if (commissionBasePrice > 0) {
-            commissionAmount = Math.floor(commissionBasePrice * (pct / 100));
-            const d = refData || {};
-            const today = startOfTodayTs();
-            const week = startOfWeekTs();
-            const month = startOfMonthTs();
-            const dailyBase = d.lastDailyReset >= today ? (d.dailyEarnings || 0) : 0;
-            const weeklyBase = d.lastWeeklyReset >= week ? (d.weeklyEarnings || 0) : 0;
-            const monthlyBase = d.lastMonthlyReset >= month ? (d.monthlyEarnings || 0) : 0;
-
-            updates[`/users/${order.referrerId}/balance`] = (d.balance || 0) + commissionAmount;
-            updates[`/users/${order.referrerId}/totalEarnings`] = (d.totalEarnings || 0) + commissionAmount;
-            updates[`/users/${order.referrerId}/dailyEarnings`] = dailyBase + commissionAmount;
-            updates[`/users/${order.referrerId}/weeklyEarnings`] = weeklyBase + commissionAmount;
-            updates[`/users/${order.referrerId}/monthlyEarnings`] = monthlyBase + commissionAmount;
-            updates[`/users/${order.referrerId}/lastDailyReset`] = today;
-            updates[`/users/${order.referrerId}/lastWeeklyReset`] = week;
-            updates[`/users/${order.referrerId}/lastMonthlyReset`] = month;
-            updates[`/orders/${order.id}/commissionAmount`] = commissionAmount;
-          }
+          updates[`/users/${order.referrerId}/balance`] = toNumber(d.balance) + commissionAmount;
+          updates[`/users/${order.referrerId}/totalEarnings`] = toNumber(d.totalEarnings) + commissionAmount;
+          updates[`/users/${order.referrerId}/dailyEarnings`] = dailyBase + commissionAmount;
+          updates[`/users/${order.referrerId}/weeklyEarnings`] = weeklyBase + commissionAmount;
+          updates[`/users/${order.referrerId}/monthlyEarnings`] = monthlyBase + commissionAmount;
+          updates[`/users/${order.referrerId}/lastDailyReset`] = today;
+          updates[`/users/${order.referrerId}/lastWeeklyReset`] = week;
+          updates[`/users/${order.referrerId}/lastMonthlyReset`] = month;
         }
+        updates[`/orders/${order.id}/commissionAmount`] = commissionAmount;
+
+        // 10% cashback to the customer (referred person)
+        cashbackAmount = Math.floor(purchasedPackagePrice * (cashbackPct / 100));
+        const custSnap = await get(dbRef(database, `users/${order.userId}`));
+        if (custSnap.exists()) {
+          const cust = custSnap.val() || {};
+          updates[`/users/${order.userId}/balance`] = toNumber(cust.balance) + cashbackAmount;
+        }
+        updates[`/orders/${order.id}/cashbackAmount`] = cashbackAmount;
       }
 
       await update(dbRef(database), updates);
 
+      // Log commission and cashback entries
       if (order.referrerId && commissionAmount > 0) {
         await push(dbRef(database, "commissions"), {
           orderId: order.id,
@@ -301,13 +317,24 @@ export default function AdminOrdersPage() {
           userId: order.userId,
         });
       }
+      if (order.referrerId && cashbackAmount > 0) {
+        await push(dbRef(database, "cashbacks"), {
+          orderId: order.id,
+          userId: order.userId,
+          referrerId: order.referrerId,
+          amount: cashbackAmount,
+          timestamp: Date.now(),
+          courseId: order.courseId,
+        });
+      }
 
+      // Email
       const subject = isUpgrade ? "Your Package Upgrade is Complete!" : "Your Skill Hub Account is Activated!";
       const htmlContent = `<h1>Congratulations, ${order.customerName}!</h1><p>${
         isUpgrade
           ? `Your upgrade to <strong>${order.product.replace("Upgrade to: ", "")}</strong> has been approved.`
           : "Your account has been approved and is now active. Please log in again to access your dashboard."
-      }</p><p><a href="https://skillhubnepal.com.np/login">Log in to Dashboard</a></p>`;
+      }</p>${order.referrerId ? `<p>A 10% cashback has been credited to your account balance.</p>` : ""}<p><a href="https://skillhubnepal.com.np/login">Log in to Dashboard</a></p>`;
 
       await fetch("/api/send-email", {
         method: "POST",
@@ -374,8 +401,8 @@ export default function AdminOrdersPage() {
         imageUrl: v.imageUrl,
         courseId: v.courseId,
         status: v.status,
-        totalEarnings: typeof v.totalEarnings === "number" ? v.totalEarnings : 0, // NEW
-        balance: typeof v.balance === "number" ? v.balance : 0,
+        totalEarnings: toNumber(v.totalEarnings),
+        balance: toNumber(v.balance),
         specialAccess: v.specialAccess,
       });
       setIsEditModalOpen(true);
