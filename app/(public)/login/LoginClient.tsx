@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { auth, database } from "@/lib/firebase";
 import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { ref, get } from "firebase/database";
@@ -21,7 +21,6 @@ export default function LoginClient() {
   const [forgotSuccess, setForgotSuccess] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
 
-  const router = useRouter();
   const searchParams = useSearchParams();
   const wasApproved = searchParams?.get("approved") === "true";
   const expired = searchParams?.get("expired") === "true";
@@ -61,6 +60,9 @@ export default function LoginClient() {
       const response = await fetch("/api/auth/session-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        // Ensure cookies are set and avoid any caching edge cases
+        credentials: "include",
+        cache: "no-store",
         body: JSON.stringify({ idToken }),
       });
 
@@ -68,7 +70,8 @@ export default function LoginClient() {
         throw new Error("Failed to create session");
       }
 
-      router.push(returnTo);
+      // Important: hard navigation so the new cookie is sent on first load
+      window.location.replace(returnTo);
     } catch (err: unknown) {
       const e = err as FirebaseAuthError;
       let errorMessage = "Login failed. Please try again.";
@@ -213,10 +216,7 @@ export default function LoginClient() {
           <div className="relative w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-bold text-slate-900">Forgot Password?</h2>
-              <button
-                onClick={() => setShowForgotPassword(false)}
-                className="text-slate-400 hover:text-slate-600"
-              >
+              <button onClick={() => setShowForgotPassword(false)} className="text-slate-400 hover:text-slate-600">
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>

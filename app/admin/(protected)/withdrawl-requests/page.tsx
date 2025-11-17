@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import Image from "next/image";
 import { database } from "@/lib/firebase";
 import { ref as dbRef, onValue, update, get, push } from "firebase/database";
-import Image from "next/image";
 import type { SVGProps } from "react";
 
 type WithdrawalStatus = "Pending" | "Completed" | "Rejected";
@@ -16,20 +16,24 @@ type WithdrawalRequestDB = {
   details: string;
   requestedAt: string;
   status: WithdrawalStatus;
-  qrUrl?: string; // Added QR URL field
+  qrUrl?: string;
 };
-
 type WithdrawalRequest = WithdrawalRequestDB & { id: string };
+
+type UserLite = { id: string; name?: string; email?: string; imageUrl?: string };
 
 export default function WithdrawalRequestsPage() {
   const [requests, setRequests] = useState<WithdrawalRequest[]>([]);
+  const [usersMap, setUsersMap] = useState<Record<string, UserLite>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isQrModalOpen, setIsQrModalOpen] = useState(false); // QR modal state
-  const [selectedRequest, setSelectedRequest] = useState<WithdrawalRequest | null>(null);
-  const [selectedQrUrl, setSelectedQrUrl] = useState<string | null>(null); // Selected QR URL
 
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [selectedRequest, setSelectedRequest] = useState<WithdrawalRequest | null>(null);
+  const [selectedQrUrl, setSelectedQrUrl] = useState<string | null>(null);
+
+  // Subscribe withdrawal requests
   useEffect(() => {
     const withdrawalRef = dbRef(database, "withdrawalRequests/");
     const unsubscribe = onValue(withdrawalRef, (snapshot) => {
@@ -52,15 +56,44 @@ export default function WithdrawalRequestsPage() {
     return () => unsubscribe();
   }, []);
 
+  // Subscribe users for avatar + email
+  useEffect(() => {
+    const uRef = dbRef(database, "users");
+    const unsub = onValue(uRef, (snap) => {
+      const v = (snap.val() || {}) as Record<string, any>;
+      const map: Record<string, UserLite> = {};
+      Object.entries(v).forEach(([id, val]) => {
+        map[id] = {
+          id,
+          name: val?.name || undefined,
+          email: val?.email || undefined,
+          imageUrl: val?.imageUrl || undefined,
+        };
+      });
+      setUsersMap(map);
+    });
+    return () => unsub();
+  }, []);
+
   const filteredRequests = requests.filter((req) => {
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    const email = usersMap[req.userId]?.email?.toLowerCase() || "";
     return (
       req.userName.toLowerCase().includes(q) ||
-      req.amount.toString().includes(q) ||
+      email.includes(q) ||
+      String(req.amount).includes(q) ||
       req.paymentMethod.toLowerCase().includes(q) ||
       req.details.toLowerCase().includes(q)
     );
   });
+
+  const stats = {
+    total: filteredRequests.length,
+    pending: filteredRequests.filter((r) => r.status === "Pending").length,
+    completed: filteredRequests.filter((r) => r.status === "Completed").length,
+    rejected: filteredRequests.filter((r) => r.status === "Rejected").length,
+  };
 
   const handleViewRequest = (request: WithdrawalRequest) => {
     setSelectedRequest(request);
@@ -81,16 +114,19 @@ export default function WithdrawalRequestsPage() {
       let emailHtmlContent = "";
 
       if (newStatus === "Completed") {
+        // Deduct user balance and log transaction
         const userBalanceRef = dbRef(database, `users/${request.userId}/balance`);
         const snapshot = await get(userBalanceRef);
         const currentBalance = Number(snapshot.val() || 0);
+
         if (currentBalance < request.amount) {
-          alert("Error: User has insufficient balance. Rejecting request.");
+          alert("Error: User has insufficient balance. Marking as Rejected.");
           updates[`/withdrawalRequests/${request.id}/status`] = "Rejected";
           await update(dbRef(database), updates);
           setIsModalOpen(false);
           return;
         }
+
         updates[`/users/${request.userId}/balance`] = currentBalance - request.amount;
 
         const txRef = push(dbRef(database, `users/${request.userId}/transactions`));
@@ -111,6 +147,7 @@ export default function WithdrawalRequestsPage() {
 
       await update(dbRef(database), updates);
 
+      // Email user
       const emailSnap = await get(dbRef(database, `users/${request.userId}/email`));
       const userEmail = emailSnap.val() as string | null;
 
@@ -129,146 +166,213 @@ export default function WithdrawalRequestsPage() {
       setIsModalOpen(false);
     } catch (error) {
       console.error("Failed to update withdrawal status:", error);
+      alert("Error updating status.");
     }
   };
 
   return (
-    <>
-      <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="p-4 sm:p-6 lg:p-8">
+      {/* Header */}
+      <header className="mb-8 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="text-2xl sm:text-3xl font-bold text-slate-900">Withdrawal Requests</h2>
-          <p className="mt-1 text-sm sm:text-base text-slate-500">Review and process user withdrawal requests.</p>
-        </div>
-        <div className="relative w-full sm:max-w-xs">
-          <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-            <SearchIcon className="h-5 w-5 text-slate-400" />
-          </div>
-          <input
-            type="text"
-            placeholder="Search by name, amount, or method..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-md border-slate-300 pl-10 shadow-sm focus:border-sky-500 focus:ring-sky-500"
-          />
+          <h1 className="text-3xl font-bold text-slate-900">Withdrawal Requests</h1>
+          <p className="mt-2 text-sm text-slate-600">Review and process user withdrawal requests</p>
         </div>
       </header>
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left">
-            <thead className="border-b border-slate-200 bg-slate-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">User</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">Amount</th>
-                <th className="hidden sm:table-cell px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">Method</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">Status</th>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">QR</th>
-                <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200">
-              {loading ? (
-                <tr>
-                  <td colSpan={6} className="p-8 text-center text-slate-500">
-                    Loading requests...
-                  </td>
-                </tr>
-              ) : filteredRequests.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="p-8 text-center text-slate-500">
-                    No withdrawal requests found.
-                  </td>
-                </tr>
-              ) : (
-                filteredRequests.map((req) => (
-                  <tr key={req.id}>
-                    <td className="whitespace-nowrap px-6 py-4 font-medium text-slate-900">{req.userName}</td>
-                    <td className="whitespace-nowrap px-6 py-4 font-mono text-slate-600">Rs {req.amount.toLocaleString()}</td>
-                    <td className="hidden sm:table-cell whitespace-nowrap px-6 py-4 text-slate-600">{req.paymentMethod}</td>
-                    <td className="whitespace-nowrap px-6 py-4">
-                      <StatusBadge status={req.status} />
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4">
-                      {req.qrUrl ? (
-                        <button
-                          onClick={() => handleViewQr(req.qrUrl!)}
-                          className="font-medium text-sky-600 hover:text-sky-800"
-                        >
-                          View QR
-                        </button>
-                      ) : (
-                        <span className="text-slate-400">No QR</span>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right">
-                      <button onClick={() => handleViewRequest(req)} className="font-medium text-sky-600 hover:text-sky-800">
-                        Review
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+      {/* Stats (match orders) */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 mb-8">
+        <StatCard title="Total Requests" value={stats.total} icon={<CashIcon />} color="slate" />
+        <StatCard title="Pending" value={stats.pending} icon={<ClockIcon />} color="yellow" />
+        <StatCard title="Completed" value={stats.completed} icon={<CheckCircleIcon />} color="green" />
+        <StatCard title="Rejected" value={stats.rejected} icon={<XCircleIcon />} color="red" />
+      </div>
+
+      {/* Search */}
+      <div className="mb-6">
+        <div className="relative max-w-md">
+          <SearchIcon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search by name, email, amount, method, details..."
+            className="w-full rounded-lg border border-slate-300 bg-white py-2 pl-10 pr-4 text-sm placeholder-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+          />
         </div>
       </div>
 
-      {/* Mobile Cards */}
-      <div className="md:hidden space-y-3 mt-4">
+      {/* Desktop Table (match orders) */}
+      <div className="hidden lg:block">
+        <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="border-b bg-slate-50">
+                <tr>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">User</th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Amount</th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Method</th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Requested</th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Status</th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">QR</th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500 text-center">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 bg-white">
+                {loading ? (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-12 text-center">
+                      <div className="flex justify-center">
+                        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-sky-600"></div>
+                      </div>
+                      <p className="mt-2 text-sm text-slate-500">Loading requests...</p>
+                    </td>
+                  </tr>
+                ) : filteredRequests.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
+                      No withdrawal requests found.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRequests.map((req) => {
+                    const u = usersMap[req.userId];
+                    return (
+                      <tr key={req.id} className="hover:bg-slate-50">
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                              {u?.imageUrl ? (
+                                <Image src={u.imageUrl} alt={req.userName} width={40} height={40} className="object-cover" />
+                              ) : (
+                                <UserIcon className="h-6 w-6 text-slate-400" />
+                              )}
+                            </div>
+                            <div>
+                              <div className="font-medium text-slate-900">{req.userName}</div>
+                              <div className="text-sm text-slate-500">{u?.email || "-"}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 font-mono text-slate-700">Rs {req.amount.toLocaleString()}</td>
+                        <td className="px-6 py-4 text-slate-900">{req.paymentMethod}</td>
+                        <td className="px-6 py-4 text-slate-900">{req.requestedAt ? new Date(req.requestedAt).toLocaleString() : "-"}</td>
+                        <td className="px-6 py-4">
+                          <StatusBadge status={req.status} />
+                        </td>
+                        <td className="px-6 py-4">
+                          {req.qrUrl ? (
+                            <button onClick={() => handleViewQr(req.qrUrl!)} className="font-medium text-sky-600 hover:text-sky-800">
+                              View QR
+                            </button>
+                          ) : (
+                            <span className="text-slate-400">No QR</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <ActionsDropdown
+                            request={req}
+                            onView={() => handleViewRequest(req)}
+                            onApprove={(r) => handleUpdateStatus(r, "Completed")}
+                            onReject={(r) => handleUpdateStatus(r, "Rejected")}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Cards (match orders) */}
+      <div className="lg:hidden space-y-4">
         {loading ? (
-          <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-slate-500">Loading requests...</div>
+          <div className="flex justify-center py-12">
+            <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-sky-600"></div>
+          </div>
         ) : filteredRequests.length === 0 ? (
-          <div className="rounded-lg border border-slate-200 bg-white p-6 text-center text-slate-500">No withdrawal requests found.</div>
+          <div className="rounded-lg border bg-white p-6 text-center text-slate-500">No withdrawal requests found.</div>
         ) : (
-          filteredRequests.map((req) => <MobileWithdrawalCard key={req.id} request={req} onView={() => handleViewRequest(req)} onViewQr={() => handleViewQr(req.qrUrl!)} />)
+          filteredRequests.map((req) => {
+            const u = usersMap[req.userId];
+            return (
+              <div key={req.id} className="rounded-lg border bg-white p-4 shadow-sm">
+                <div className="mb-3 flex items-start justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
+                      {u?.imageUrl ? (
+                        <Image src={u.imageUrl} alt={req.userName} width={40} height={40} className="object-cover" />
+                      ) : (
+                        <UserIcon className="h-6 w-6 text-slate-400" />
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-slate-900">{req.userName}</h3>
+                      <p className="text-sm text-slate-500">{u?.email || "-"}</p>
+                      <p className="mt-1 text-xs text-slate-400">{new Date(req.requestedAt).toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <StatusBadge status={req.status} />
+                </div>
+
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Amount</span>
+                    <span className="font-mono text-slate-700">Rs {req.amount.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Method</span>
+                    <span className="text-slate-900">{req.paymentMethod}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Details</span>
+                    <span className="text-slate-600">{req.details}</span>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex gap-2">
+                  {req.qrUrl && (
+                    <button
+                      onClick={() => handleViewQr(req.qrUrl!)}
+                      className="flex-1 rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-200"
+                    >
+                      View QR
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleViewRequest(req)}
+                    className="flex-1 rounded-md bg-sky-600 px-3 py-2 text-sm font-medium text-white hover:bg-sky-700"
+                  >
+                    Review
+                  </button>
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 
+      {/* Review Modal */}
       {isModalOpen && selectedRequest && (
-        <WithdrawalReviewModal request={selectedRequest} onClose={() => setIsModalOpen(false)} onUpdateStatus={handleUpdateStatus} />
+        <WithdrawalReviewModal
+          request={selectedRequest}
+          onClose={() => setIsModalOpen(false)}
+          onUpdateStatus={handleUpdateStatus}
+        />
       )}
 
+      {/* QR Modal */}
       {isQrModalOpen && selectedQrUrl && (
         <QRViewModal qrUrl={selectedQrUrl} onClose={() => setIsQrModalOpen(false)} />
       )}
-    </>
-  );
-}
-
-function MobileWithdrawalCard({ request, onView, onViewQr }: { request: WithdrawalRequest; onView: () => void; onViewQr: () => void }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="font-semibold text-slate-900">{request.userName}</div>
-          <div className="text-sm text-slate-500">Rs {request.amount.toLocaleString()}</div>
-          <div className="mt-1 text-xs text-slate-400">{new Date(request.requestedAt).toLocaleDateString()}</div>
-        </div>
-        <StatusBadge status={request.status} />
-      </div>
-      <div className="mt-3 text-sm">
-        <div className="flex justify-between">
-          <span className="text-slate-500">Method</span>
-          <span className="font-mono text-slate-600">{request.paymentMethod}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-slate-500">Details</span>
-          <span className="text-slate-600">{request.details}</span>
-        </div>
-      </div>
-      <div className="mt-4 flex gap-2">
-        {request.qrUrl && (
-          <button onClick={onViewQr} className="flex-1 rounded-md bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-200">
-            View QR
-          </button>
-        )}
-        <button onClick={onView} className="flex-1 rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">
-          Review
-        </button>
-      </div>
     </div>
   );
 }
+
+/* ================== Components ================== */
 
 function WithdrawalReviewModal({
   request,
@@ -294,20 +398,17 @@ function WithdrawalReviewModal({
           </button>
         </div>
         <div className="mt-4 space-y-3 rounded-md border bg-slate-50 p-4">
-          <DetailItem label="Amount" value={`Rs ${request.amount.toLocaleString()}`} />
-          <DetailItem label="Method" value={request.paymentMethod} />
-          <DetailItem label="Details" value={request.details} />
-          <DetailItem label="Requested At" value={new Date(request.requestedAt).toLocaleString()} />
+          <DetailRow label="Amount" value={`Rs ${request.amount.toLocaleString()}`} />
+          <DetailRow label="Method" value={request.paymentMethod} />
+          <DetailRow label="Details" value={request.details} />
+          <DetailRow label="Requested At" value={new Date(request.requestedAt).toLocaleString()} />
           {request.qrUrl && (
             <div className="flex justify-between border-b border-slate-200 pb-2">
               <dt className="text-sm font-medium text-slate-500">QR Code</dt>
               <dd className="text-sm">
-                <button
-                  onClick={() => window.open(request.qrUrl, '_blank')}
-                  className="font-semibold text-sky-600 hover:text-sky-800"
-                >
+                <a href={request.qrUrl} target="_blank" className="font-semibold text-sky-600 hover:text-sky-800">
                   View QR
-                </button>
+                </a>
               </dd>
             </div>
           )}
@@ -337,7 +438,6 @@ function WithdrawalReviewModal({
   );
 }
 
-// New QR View Modal
 function QRViewModal({ qrUrl, onClose }: { qrUrl: string; onClose: () => void }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" aria-modal="true">
@@ -350,20 +450,11 @@ function QRViewModal({ qrUrl, onClose }: { qrUrl: string; onClose: () => void })
         </div>
         <div className="mt-6 flex justify-center">
           <div className="relative w-64 h-64">
-            <Image
-              src={qrUrl}
-              alt="Payment QR Code"
-              fill
-              className="rounded-lg border border-slate-200 object-contain"
-            />
+            <Image src={qrUrl} alt="Payment QR Code" fill className="rounded-lg border border-slate-200 object-contain" />
           </div>
         </div>
         <div className="mt-6 flex justify-center">
-          <a
-            href={qrUrl}
-            download="payment-qr.png"
-            className="rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700"
-          >
+          <a href={qrUrl} download="payment-qr.png" className="rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700">
             Download QR
           </a>
         </div>
@@ -372,7 +463,114 @@ function QRViewModal({ qrUrl, onClose }: { qrUrl: string; onClose: () => void })
   );
 }
 
-function DetailItem({ label, value }: { label: string; value: string }) {
+function ActionsDropdown({
+  request,
+  onView,
+  onApprove,
+  onReject,
+}: {
+  request: WithdrawalRequest;
+  onView: () => void;
+  onApprove: (r: WithdrawalRequest) => void;
+  onReject: (r: WithdrawalRequest) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setIsOpen(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  return (
+    <div className="relative inline-block text-left" ref={menuRef}>
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
+      >
+        Actions
+        <ChevronDownIcon className="ml-2 h-4 w-4" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white shadow-lg ring-1 ring-black ring-opacity-5">
+          <div className="py-1">
+            <button
+              onClick={() => {
+                onView();
+                setIsOpen(false);
+              }}
+              className="flex w-full items-center px-4 py-2 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <EyeIcon className="mr-3 h-4 w-4" />
+              Review
+            </button>
+            {request.status === "Pending" && (
+              <>
+                <button
+                  onClick={() => {
+                    onApprove(request);
+                    setIsOpen(false);
+                  }}
+                  className="flex w-full items-center px-4 py-2 text-sm text-green-700 hover:bg-green-50"
+                >
+                  <CheckIcon className="mr-3 h-4 w-4" />
+                  Approve &amp; Pay
+                </button>
+                <button
+                  onClick={() => {
+                    onReject(request);
+                    setIsOpen(false);
+                  }}
+                  className="flex w-full items-center px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+                >
+                  <XIcon className="mr-3 h-4 w-4" />
+                  Reject
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatCard({
+  title,
+  value,
+  icon,
+  color,
+}: {
+  title: string;
+  value: number;
+  icon: React.ReactNode;
+  color: "slate" | "yellow" | "green" | "red";
+}) {
+  const bg =
+    color === "yellow" ? "bg-yellow-100" : color === "green" ? "bg-green-100" : color === "red" ? "bg-red-100" : "bg-slate-100";
+  const text =
+    color === "yellow" ? "text-yellow-600" : color === "green" ? "text-green-600" : color === "red" ? "text-red-600" : "text-slate-600";
+
+  return (
+    <div className="rounded-lg border bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className={`text-sm font-medium ${text}`}>{title}</p>
+          <p className="text-2xl font-bold text-slate-900">{value}</p>
+        </div>
+        <div className={`rounded-full ${bg} p-3`}>
+          <span className={text}>{icon}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between border-b border-slate-200 pb-2 last:border-b-0">
       <dt className="text-sm font-medium text-slate-500">{label}</dt>
@@ -388,6 +586,71 @@ function StatusBadge({ status }: { status: WithdrawalStatus }) {
   return <span className={`${base} bg-red-100 text-red-800`}>Rejected</span>;
 }
 
+/* ================== Icons (match orders) ================== */
+function SearchIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" {...props}>
+      <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
+    </svg>
+  );
+}
+function CashIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7h18v10H3zM7 7a4 4 0 004 4 4 4 0 004-4M7 17a4 4 0 004-4 4 4 0 004 4" />
+    </svg>
+  );
+}
+function ClockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+function CheckCircleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+function XCircleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+function ChevronDownIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+function EyeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.477 0 8.268 2.943 9.542 7-1.274 4.057-5.065 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+    </svg>
+  );
+}
+function CheckIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+function XIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
 function CloseIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" {...props}>
@@ -395,15 +658,10 @@ function CloseIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-
-function SearchIcon(props: SVGProps<SVGSVGElement>) {
+function UserIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" {...props}>
-      <path
-        fillRule="evenodd"
-        d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
-        clipRule="evenodd"
-      />
+      <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
     </svg>
   );
 }

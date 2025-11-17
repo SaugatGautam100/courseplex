@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "^0.2.79",
     "express": "^4.21.2",
     "firebase": "^10.12.2",
     "firebase-admin": "^13.5.0",

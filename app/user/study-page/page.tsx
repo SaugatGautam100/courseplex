@@ -10,7 +10,7 @@ import type { SVGProps } from "react";
 /* ================== Types ================== */
 type Video = { id: string; title: string; url: string };
 type VideosMap = { [key: string]: Omit<Video, "id"> };
-type Course = { id: string; title: string; videos?: VideosMap };
+type Course = { id:string; title: string; videos?: VideosMap };
 type Package = {
   id: string;
   name: string;
@@ -60,7 +60,7 @@ async function loadScript(src: string) {
     const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) return resolve();
     const s = document.createElement("script");
-    s.src = src;
+s.src = src;
     s.async = true;
     s.onload = () => resolve();
     s.onerror = () => reject(new Error("Failed to load script: " + src));
@@ -116,6 +116,8 @@ export default function StudyPage() {
 
   const [showCertModal, setShowCertModal] = useState(false);
   const certRef = useRef<HTMLDivElement | null>(null);
+  
+  const issueDate = useMemo(() => new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), []);
 
   // Auth + live user node
   useEffect(() => {
@@ -299,46 +301,23 @@ export default function StudyPage() {
       }
 
       const canvas = await window.html2canvas!(certRef.current, {
-        backgroundColor: "#ffffff",
+        backgroundColor: null, // Use transparent background for PNG
         scale: 2,
         useCORS: true,
         allowTaint: false,
         logging: false,
       });
 
-      const filename = `certificate-${selectedPackage.name.replace(/\s+/g, "-")}.png`;
+      const filename = `Certificate-${selectedPackage.name.replace(/\s+/g, "-")}.png`;
 
-      if (canvas.toBlob) {
-        canvas.toBlob((blob) => {
-          if (!blob) {
-            // Fallback
-            const data = canvas.toDataURL("image/png");
-            const a = document.createElement("a");
-            a.href = data;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            return;
-          }
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = filename; // Always set download; no unreachable else branch
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(url);
-        }, "image/png");
-      } else {
-        const data = canvas.toDataURL("image/png");
-        const a = document.createElement("a");
-        a.href = data;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-      }
+      const data = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = data;
+      a.download = filename;
+      document.body.appendChild(a);
+a.click();
+      a.remove();
+      
     } catch (e) {
       console.error("Certificate download failed:", e);
       alert("Could not generate certificate. Please try again.");
@@ -593,106 +572,88 @@ export default function StudyPage() {
           </div>
         </aside>
       </div>
-
-      {/* Certificate Modal (original design, no signature/date) */}
+      
+      {/* ====== Certificate Modal (Modern Design) ====== */}
       {showCertModal && selectedPackage && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <div className="relative w-full max-w-4xl rounded-2xl bg-white shadow-xl">
             <div className="flex items-center justify-between border-b px-4 py-3">
-              <h3 className="text-lg font-semibold">Certificate Preview</h3>
+              <h3 className="text-lg font-semibold">Certificate of Completion</h3>
               <button onClick={() => setShowCertModal(false)} className="rounded-full p-1 hover:bg-slate-100">
                 <CloseIcon className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="max-h-[70vh] overflow-auto p-6 bg-slate-100">
-              {/* Certificate Canvas (classic frame style + logo) */}
+            <div className="max-h-[70vh] overflow-auto p-6 bg-slate-200/70">
               <div
                 ref={certRef}
-                className="relative mx-auto w-full max-w-3xl bg-white"
+                className="relative mx-auto aspect-[11/8.5] w-full max-w-3xl overflow-hidden rounded-lg border bg-white shadow-lg"
                 style={{
-                  boxShadow: "0 10px 30px rgba(0,0,0,0.08)",
-                  border: "12px solid #0f2743",
+                  backgroundImage: `url('data:image/svg+xml;utf8,<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><g fill="%23e2e8f0" fill-opacity="0.4"><rect x="50" width="50" height="50" /><rect y="50" width="50" height="50" /></g></svg>')`,
                 }}
               >
-                {/* Inner frames */}
-                <div className="m-2 border-4 border-white">
-                  <div className="m-2 border-2 border-slate-300">
-                    {/* Header with logo + title */}
-                    <div className="px-8 pt-8 text-center">
-                      <div className="flex items-center justify-between">
-                        {/* Plain <img> so html2canvas captures it */}
-                        <img
-                          src="/images/courseplexlogo.png"
-                          alt="Course Plex Logo"
-                          crossOrigin="anonymous"
-                          className="h-14 w-14 object-contain"
-                        />
-                        <div className="flex-1 text-center">
-                          <div className="text-[28px] tracking-[0.35em] font-bold text-slate-700">CERTIFICATE</div>
-                          <div className="mt-1 text-sm font-semibold tracking-widest text-slate-500">OF ACHIEVEMENT</div>
-                        </div>
-                        <div className="h-14 w-14" />
-                      </div>
+                <div className="absolute left-0 top-0 h-full w-1/3 bg-indigo-900/90" />
+                <div
+                  className="absolute -left-20 -top-20 h-48 w-48 rounded-full border-[20px] border-amber-400/80"
+                />
 
-                      {/* Accent diamonds */}
-                      <div className="mt-4 flex items-center justify-center gap-2 text-[10px]">
-                        <span className="inline-block h-2 w-2 rotate-45 bg-sky-600" />
-                        <span className="inline-block h-2 w-2 rotate-45 bg-amber-500" />
-                        <span className="inline-block h-2 w-2 rotate-45 bg-sky-600" />
-                      </div>
-
-                      <p className="mt-6 text-xs font-semibold text-slate-500">
+                <div className="relative flex h-full flex-col p-10 text-slate-800">
+                  <div className="flex items-start justify-between">
+                    <div className="w-2/3">
+                      <h1 className="text-[2.75rem] font-bold leading-none tracking-tight text-white [text-wrap:balance]">
+                        Certificate of Completion
+                      </h1>
+                      <p className="mt-4 text-sm font-medium text-indigo-200">
                         This certificate is proudly presented to
                       </p>
-                      <div className="mt-2 text-3xl font-extrabold text-slate-900">{userName}</div>
+                    </div>
+                    <img
+                      src="/images/courseplexlogo.png"
+                      alt="Course Plex Logo"
+                      crossOrigin="anonymous"
+                      className="h-16 w-16 object-contain"
+                    />
+                  </div>
 
-                      {/* Description */}
-                      <p className="mx-auto mt-4 max-w-xl text-[13px] leading-relaxed text-slate-600">
-                        For successfully completing the course
-                        <span className="font-semibold"> {selectedPackage.name}</span> provided by Course Plex.
-                        We recognize your dedication and effort in achieving this milestone.
-                      </p>
-
-                      {/* User info */}
-                      <div className="mx-auto mt-5 grid max-w-2xl grid-cols-2 gap-3 text-[11px]">
-                        <div className="rounded bg-slate-50 px-3 py-2 text-left ring-1 ring-slate-200">
-                          <div className="font-semibold text-slate-700">Email</div>
-                          <div className="text-slate-700">{userEmail || "-"}</div>
-                        </div>
-                        <div className="rounded bg-slate-50 px-3 py-2 text-left ring-1 ring-slate-200">
-                          <div className="font-semibold text-slate-700">Phone</div>
-                          <div className="text-slate-700">{userPhone || "-"}</div>
-                        </div>
+                  <div className="mt-6 flex-1">
+                    <p
+                      className="font-serif text-5xl font-medium text-indigo-900"
+                      style={{ fontFamily: "'Georgia', serif" }}
+                    >
+                      {userName}
+                    </p>
+                    <p className="mt-4 max-w-md text-sm text-slate-600">
+                      For successfully completing the comprehensive online course:
+                    </p>
+                    <p className="mt-2 text-xl font-semibold text-indigo-900 [text-wrap:balance]">
+                      {selectedPackage.name}
+                    </p>
+                  </div>
+                  
+                  <div className="mt-auto flex items-end justify-between">
+                    <div className="text-xs">
+                      <p className="font-semibold text-slate-800">Date Issued</p>
+                      <p className="mt-1 border-t border-slate-300 pt-1 text-slate-600">{issueDate}</p>
+                    </div>
+                    
+                    <div className="relative h-24 w-24">
+                      <AwardIcon className="h-full w-full text-amber-400 opacity-80" />
+                      <div className="absolute inset-0 flex items-center justify-center text-center text-[10px] font-bold uppercase tracking-wider text-indigo-900">
+                        Official Seal
                       </div>
                     </div>
-
-                    {/* Ribbon/award */}
-                    <div className="mt-6 flex items-center justify-center">
-                      <div className="relative">
-                        <div className="mx-auto h-16 w-16 rounded-full bg-gradient-to-br from-amber-400 to-yellow-500 ring-4 ring-white shadow" />
-                        <div className="absolute inset-0 grid place-items-center">
-                          <div className="text-[10px] font-extrabold tracking-widest text-white drop-shadow">COURSE</div>
-                        </div>
-                        <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 flex gap-1">
-                          <div className="h-6 w-3 rounded-b bg-amber-500" />
-                          <div className="h-6 w-3 rounded-b bg-yellow-400" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Removed footer lines (date/signature) */}
-
-                    {/* Decorative bottom stripes */}
-                    <div className="relative mt-12 h-8 w-full overflow-hidden">
-                      <div className="absolute -left-10 top-1 h-2 w-1/2 -skew-x-12 bg-[#163455]" />
-                      <div className="absolute left-20 top-1 h-2 w-1/4 -skew-x-12 bg-[#F59E0B]" />
-                      <div className="absolute left-40 top-1 h-2 w-1/3 -skew-x-12 bg-[#245A8D]" />
+                    
+                    <div className="text-center text-xs">
+                      <p className="font-serif text-lg italic text-slate-700" style={{ fontFamily: "'Brush Script MT', cursive" }}>J. Doe</p>
+                      <p className="mt-1 border-t border-slate-300 pt-1 font-semibold text-slate-800">John Doe, Head Instructor</p>
                     </div>
                   </div>
+
+                  <p className="absolute bottom-2 right-4 text-[9px] font-mono text-slate-400">
+                    ID: {userId?.slice(0, 8)}-{selectedPackage.id.slice(0, 8)}
+                  </p>
                 </div>
               </div>
-              {/* /certificate canvas */}
             </div>
 
             <div className="flex items-center justify-end gap-3 border-t p-3">

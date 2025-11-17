@@ -6,7 +6,8 @@ import { ref, onValue } from "firebase/database";
 import Image from "next/image";
 import type { SVGProps } from "react";
 
-type User = { id: string; name: string; imageUrl?: string }; // name required for display
+/* ================== Types ================== */
+type User = { id: string; name: string; imageUrl?: string };
 type RawUser = { name?: string; imageUrl?: string; status?: string } | null | undefined;
 type PackageRec = { price?: number };
 type Order = {
@@ -17,15 +18,14 @@ type Order = {
   status?: "Pending Approval" | "Completed" | "Rejected";
   createdAt?: string;
   commissionAmount?: number;
-  cashbackAmount?: number; // include cashback for fallback
 };
 type OrderDb = Omit<Order, "id">;
 type CommissionEvent = { referrerId: string; amount: number; timestamp: number };
 type CommissionDb = { referrerId?: string; amount?: number | string; timestamp?: number | string };
-type CashbackEvent = { userId: string; amount: number; timestamp: number };
-type CashbackDb = { userId?: string; amount?: number | string; timestamp?: number | string };
 type LeaderboardEntry = { user: User; earnings: number };
+type TimeframeKey = "daily" | "weekly" | "monthly" | "lifetime";
 
+/* ================== Utils ================== */
 const startOfToday = () => {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
@@ -45,38 +45,29 @@ const startOfMonth = () => {
 };
 const formatCurrency = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
 
+/* ================== Page ================== */
 export default function LeaderboardPage() {
   const [users, setUsers] = useState<Record<string, User>>({});
   const [packages, setPackages] = useState<Record<string, PackageRec>>({});
   const [orders, setOrders] = useState<Order[]>([]);
   const [commissions, setCommissions] = useState<CommissionEvent[]>([]);
-  const [cashbacks, setCashbacks] = useState<CashbackEvent[]>([]);
-  const [loaded, setLoaded] = useState({
-    users: false,
-    packages: false,
-    orders: false,
-    commissions: false,
-    cashbacks: false,
-  });
+  const [loaded, setLoaded] = useState({ users: false, packages: false, orders: false, commissions: false });
+  const [timeframe, setTimeframe] = useState<TimeframeKey>("lifetime");
 
   useEffect(() => {
     const usersRef = ref(database, "users");
     const pkRef = ref(database, "packages");
     const ordersRef = ref(database, "orders");
     const comRef = ref(database, "commissions");
-    const cbRef = ref(database, "cashbacks");
 
     const unUsers = onValue(usersRef, (snap) => {
       const v = (snap.val() || {}) as Record<string, RawUser>;
       const mapped: Record<string, User> = {};
       Object.entries(v).forEach(([id, u]) => {
-        if (!u) return; // missing/deleted
+        if (!u) return;
         const rawName = typeof u.name === "string" ? u.name.trim() : "";
-        // Skip users without a name (prevents "Unknown" placeholders)
         if (!rawName) return;
-        // Optionally skip deleted/rejected if you store status
         if (u.status && (u.status === "deleted" || u.status === "rejected")) return;
-
         mapped[id] = { id, name: rawName, imageUrl: u.imageUrl || undefined };
       });
       setUsers(mapped);
@@ -99,7 +90,6 @@ export default function LeaderboardPage() {
         status: o.status,
         createdAt: o.createdAt,
         commissionAmount: typeof o.commissionAmount === "number" ? o.commissionAmount : undefined,
-        cashbackAmount: typeof o.cashbackAmount === "number" ? o.cashbackAmount : undefined,
       }));
       setOrders(list);
       setLoaded((s) => ({ ...s, orders: true }));
@@ -126,57 +116,28 @@ export default function LeaderboardPage() {
       () => setLoaded((s) => ({ ...s, commissions: true }))
     );
 
-    const unCb = onValue(
-      cbRef,
-      (snap) => {
-        const v = (snap.val() || {}) as Record<string, CashbackDb>;
-        const list: (CashbackEvent | null)[] = Object.values(v).map((c) => {
-          const amount =
-            typeof c.amount === "number" ? c.amount :
-            typeof c.amount === "string" ? parseFloat(c.amount) : NaN;
-          const ts =
-            typeof c.timestamp === "number" ? c.timestamp :
-            typeof c.timestamp === "string" ? Date.parse(c.timestamp) : NaN;
-          return c && c.userId && isFinite(amount) && isFinite(ts)
-            ? { userId: c.userId, amount, timestamp: ts }
-            : null;
-        });
-        setCashbacks(list.filter((x): x is CashbackEvent => x !== null));
-        setLoaded((s) => ({ ...s, cashbacks: true }));
-      },
-      () => setLoaded((s) => ({ ...s, cashbacks: true }))
-    );
-
     return () => {
       unUsers();
       unPk();
       unOrders();
       unCom();
-      unCb();
     };
   }, []);
 
-  const loading =
-    !loaded.users || !loaded.packages || !loaded.orders || !loaded.commissions || !loaded.cashbacks;
+  const loading = !loaded.users || !loaded.packages || !loaded.orders || !loaded.commissions;
 
   // Prefer /commissions; fallback to deriving from orders
   const commissionStream: CommissionEvent[] = useMemo(() => {
     if (!loading && commissions.length > 0) {
-      // Filter out events where user is deleted or nameless
       return commissions.filter((c) => users[c.referrerId] && !!users[c.referrerId].name);
     }
-
     const derived: CommissionEvent[] = [];
     for (const o of orders) {
       if (o.status !== "Completed" || !o.referrerId || !o.createdAt) continue;
-      // Skip if referrer has been deleted or has no name in users
       if (!users[o.referrerId] || !users[o.referrerId].name) continue;
 
       const price = o.courseId ? (packages[o.courseId!]?.price || 0) : 0;
-      const amount =
-        typeof o.commissionAmount === "number"
-          ? o.commissionAmount
-          : Math.floor((price || 0) * 0.58);
+      const amount = typeof o.commissionAmount === "number" ? o.commissionAmount : Math.floor((price || 0) * 0.58);
       if (!isFinite(amount) || amount <= 0) continue;
       const ts = Date.parse(o.createdAt);
       if (!isFinite(ts)) continue;
@@ -185,49 +146,20 @@ export default function LeaderboardPage() {
     return derived;
   }, [loading, commissions, orders, packages, users]);
 
-  // Cashbacks: Prefer /cashbacks; fallback to deriving from orders
-  const cashbackStream: CashbackEvent[] = useMemo(() => {
-    if (!loading && cashbacks.length > 0) {
-      return cashbacks.filter((c) => users[c.userId] && !!users[c.userId].name);
-    }
-    const derived: CashbackEvent[] = [];
-    for (const o of orders) {
-      if (o.status !== "Completed" || !o.userId || !o.createdAt) continue;
-      if (!users[o.userId] || !users[o.userId].name) continue;
-      const amount = typeof o.cashbackAmount === "number" ? o.cashbackAmount : 0;
-      if (!isFinite(amount) || amount <= 0) continue;
-      const ts = Date.parse(o.createdAt);
-      if (!isFinite(ts)) continue;
-      derived.push({ userId: o.userId, amount, timestamp: ts });
-    }
-    return derived;
-  }, [loading, cashbacks, orders, users]);
-
-  // Combine both streams as earnings
-  // Normalize to a common shape: { uid, amount, timestamp }
-  const earningsStream = useMemo(() => {
-    const asEarnings = [
-      ...commissionStream.map((c) => ({ uid: c.referrerId, amount: c.amount, timestamp: c.timestamp })),
-      ...cashbackStream.map((c) => ({ uid: c.userId, amount: c.amount, timestamp: c.timestamp })),
-    ];
-    // Filter to known, named users (safety)
-    return asEarnings.filter((e) => users[e.uid] && !!users[e.uid].name);
-  }, [commissionStream, cashbackStream, users]);
-
   const leaderboards = useMemo(() => {
     const calc = (fromTs?: number): LeaderboardEntry[] => {
-      const sumByUser = new Map<string, number>();
-      for (const e of earningsStream) {
-        if (fromTs && e.timestamp < fromTs) continue;
-        sumByUser.set(e.uid, (sumByUser.get(e.uid) || 0) + e.amount);
+      const sumByReferrer = new Map<string, number>();
+      for (const c of commissionStream) {
+        if (fromTs && c.timestamp < fromTs) continue;
+        sumByReferrer.set(c.referrerId, (sumByReferrer.get(c.referrerId) || 0) + c.amount);
       }
       const entries: LeaderboardEntry[] = [];
-      for (const [uid, earnings] of sumByUser) {
+      for (const [uid, earnings] of sumByReferrer) {
         const u = users[uid];
-        // Only include if user exists with a valid name (deleted users not included)
         if (!u || !u.name) continue;
         entries.push({ user: u, earnings });
       }
+      // Top 10
       return entries.sort((a, b) => b.earnings - a.earnings).slice(0, 10);
     };
 
@@ -237,223 +169,473 @@ export default function LeaderboardPage() {
       monthly: calc(startOfMonth()),
       lifetime: calc(undefined),
     };
-  }, [earningsStream, users]);
+  }, [commissionStream, users]);
 
-  const top3Lifetime = leaderboards.lifetime.slice(0, 3);
-  const maxLifetime = Math.max(1, ...top3Lifetime.map((e) => e.earnings));
+  const current = leaderboards[timeframe];
+  const maxAll = Math.max(1, ...current.map((e) => e.earnings));
+  const top3 = current.slice(0, 3);
+  const others = current.slice(3, 10);
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <header className="mb-10 text-center">
-        <h1 className="text-4xl font-extrabold tracking-tight text-slate-900">Affiliate Leaderboard</h1>
-        <p className="mt-2 text-lg text-slate-600">Daily, Weekly, Monthly and All-Time top performers</p>
+    <div className="relative max-w-5xl mx-auto px-4 py-10">
+      {/* Ambient gradient background */}
+      <div className="pointer-events-none absolute inset-0 -z-10">
+        <div className="absolute -top-24 left-1/2 h-72 w-[70vw] -translate-x-1/2 rounded-full bg-gradient-to-r from-rose-300/30 via-sky-300/30 to-violet-300/30 blur-3xl" />
+      </div>
+
+      <header className="mb-8 text-center">
+        <div className="inline-flex items-center gap-2 rounded-full bg-white/70 px-3 py-1 text-xs font-medium text-slate-600 ring-1 ring-slate-200/70 backdrop-blur">
+          <SparklesIcon className="h-4 w-4 text-amber-500" />
+          Top 10 Leaders
+        </div>
+        <h1 className="mt-3 text-4xl md:text-5xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600">
+          Affiliate Leaderboard
+        </h1>
+        <p className="mt-2 text-slate-600">Top 3 celebrated in style. Aim for the podium ✨</p>
       </header>
 
-      {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          {[...Array(4)].map((_, i) => (
-            <div key={i} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-              <div className="h-6 w-40 bg-slate-200 rounded animate-pulse" />
-              <div className="mt-4 space-y-3">
-                {[...Array(3)].map((__, j) => (
-                  <div key={j} className="flex items-center gap-3">
-                    <div className="h-7 w-7 rounded-full bg-slate-200 animate-pulse" />
-                    <div className="h-5 flex-1 bg-slate-200 rounded animate-pulse" />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
+      {/* Segmented control (tabs) */}
+      <div className="mb-6 flex justify-center">
+        <div className="inline-flex items-center gap-1 rounded-full bg-slate-100 p-1 shadow-inner ring-1 ring-slate-200">
+          {(["daily", "weekly", "monthly", "lifetime"] as TimeframeKey[]).map((key) => {
+            const active = timeframe === key;
+            const label =
+              key === "daily" ? "Today" : key === "weekly" ? "This Week" : key === "monthly" ? "This Month" : "All-Time";
+            const Icon =
+              key === "daily" ? SunIcon : key === "weekly" ? CalendarIcon : key === "monthly" ? MonthIcon : InfinityIcon;
+            return (
+              <button
+                key={key}
+                onClick={() => setTimeframe(key)}
+                className={[
+                  "group inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition",
+                  active
+                    ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white/60",
+                ].join(" ")}
+              >
+                <span className={active ? "text-slate-900" : "text-slate-500"}>
+                  <Icon className="h-4 w-4" />
+                </span>
+                {label}
+              </button>
+            );
+          })}
         </div>
-      ) : (
-        <>
-          {/* Timeframes grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-            <TimeframeCard
-              title="Today's Earners"
-              gradient="from-pink-500 to-rose-600"
-              icon={<SunIcon className="h-5 w-5 text-white" />}
-              data={leaderboards.daily}
-            />
-            <TimeframeCard
-              title="This Week"
-              gradient="from-violet-500 to-purple-600"
-              icon={<CalendarIcon className="h-5 w-5 text-white" />}
-              data={leaderboards.weekly}
-            />
-            <TimeframeCard
-              title="This Month"
-              gradient="from-sky-500 to-blue-600"
-              icon={<MonthIcon className="h-5 w-5 text-white" />}
-              data={leaderboards.monthly}
-            />
-            <TimeframeCard
-              title="All-Time"
-              gradient="from-amber-500 to-orange-600"
-              icon={<InfinityIcon className="h-5 w-5 text-white" />}
-              data={leaderboards.lifetime}
-            />
-          </div>
+      </div>
 
-          {/* All-Time Top 3 Podium */}
-          <section className="rounded-2xl border bg-white p-6 shadow-sm">
-            <h2 className="text-xl font-bold text-slate-900 text-center">All-Time Top 3</h2>
-            {top3Lifetime.length === 0 ? (
-              <p className="text-center text-slate-500 mt-6">No earnings yet.</p>
-            ) : (
-              <div className="mt-8 flex justify-center">
-                <div className="flex items-end gap-8">
-                  {/* 2nd */}
-                  {top3Lifetime[1] && (
-                    <PodiumBar
-                      rank={2}
-                      entry={top3Lifetime[1]}
-                      max={maxLifetime}
-                      barColor="bg-slate-300"
-                      crownColor="from-slate-400 to-gray-500"
-                    />
-                  )}
-                  {/* 1st */}
-                  {top3Lifetime[0] && (
-                    <PodiumBar
-                      rank={1}
-                      entry={top3Lifetime[0]}
-                      max={maxLifetime}
-                      barColor="bg-amber-300"
-                      crownColor="from-amber-400 to-yellow-500"
-                    />
-                  )}
-                  {/* 3rd */}
-                  {top3Lifetime[2] && (
-                    <PodiumBar
-                      rank={3}
-                      entry={top3Lifetime[2]}
-                      max={maxLifetime}
-                      barColor="bg-orange-300"
-                      crownColor="from-orange-400 to-orange-600"
-                    />
-                  )}
-                </div>
+      {/* Main card */}
+      <section className="rounded-2xl border border-slate-200/70 bg-white/70 shadow-lg backdrop-blur overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4">
+          <div className="flex items-center gap-2">
+            <TrophyIcon className="h-5 w-5 text-amber-500" />
+            <h2 className="text-base md:text-lg font-bold text-slate-900">
+              {timeframe === "daily" ? "Today's" : timeframe === "weekly" ? "This Week's" : timeframe === "monthly" ? "This Month's" : "All-Time"} Top 10
+            </h2>
+          </div>
+          <div className="text-xs md:text-sm text-slate-500">Ranking by total commissions</div>
+        </div>
+
+        {loading ? (
+          <div className="px-5 pb-5">
+            <PodiumSkeleton />
+            <ul className="divide-y divide-slate-200/70 mt-2">
+              {[...Array(7)].map((_, i) => (
+                <li key={i} className="px-1 py-4">
+                  <div className="flex items-center gap-4">
+                    <div className="h-8 w-8 rounded-full bg-slate-200 animate-pulse" />
+                    <div className="h-11 w-11 rounded-full bg-slate-200 animate-pulse" />
+                    <div className="flex-1">
+                      <div className="h-4 w-40 bg-slate-200 rounded animate-pulse" />
+                      <div className="mt-2 h-2 w-full bg-slate-100 rounded overflow-hidden">
+                        <div className="h-full w-1/3 bg-slate-200 animate-pulse" />
+                      </div>
+                    </div>
+                    <div className="h-5 w-24 bg-slate-200 rounded animate-pulse" />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : current.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <div className="mx-auto mb-3 w-12 h-12 rounded-full bg-gradient-to-br from-slate-200 to-slate-100 flex items-center justify-center">
+              <UserIcon className="h-6 w-6 text-slate-400" />
+            </div>
+            <p className="text-slate-700 font-semibold">No earnings recorded yet</p>
+            <p className="text-slate-500 text-sm">Be the first to climb the leaderboard.</p>
+          </div>
+        ) : (
+          <div className="px-5 pb-5">
+            {/* Premium Top 3 Podium */}
+            <TopThreePodium top3={top3} />
+
+            {/* Ranks 4–10 wrapped in a colorful panel */}
+            {others.length > 0 && (
+              <div className="mt-4">
+                <ColorfulPanel>
+                  <ol className="divide-y divide-white/30">
+                    {others.map((entry, idx) => (
+                      <LeaderboardRow
+                        key={entry.user.id}
+                        rank={idx + 4}
+                        entry={entry}
+                        max={maxAll}
+                      />
+                    ))}
+                  </ol>
+                </ColorfulPanel>
               </div>
             )}
-          </section>
-        </>
-      )}
+          </div>
+        )}
+      </section>
+
+      <p className="mt-6 text-center text-xs text-slate-500">
+        Data auto-updates in real-time • Powered by Firebase
+      </p>
+
+      {/* Animated gradient helper */}
+      <style jsx global>{`
+        @keyframes gradient-x {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        .animate-gradient-x {
+          background-size: 200% 100%;
+          animation: gradient-x 6s ease infinite;
+        }
+      `}</style>
     </div>
   );
 }
 
-/* ================== UI Components ================== */
-
-function TimeframeCard({
-  title,
-  gradient,
-  icon,
-  data,
-}: {
-  title: string;
-  gradient: string;
-  icon: ReactNode;
-  data: LeaderboardEntry[];
-}) {
-  const top3 = data.slice(0, 3);
+/* ================== Colorful Panel for ranks 4–10 ================== */
+function ColorfulPanel({ children }: { children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden shadow-sm">
-      <div className={`flex items-center justify-between bg-gradient-to-r ${gradient} px-4 py-3`}>
-        <h3 className="text-white font-bold">{title}</h3>
-        <div className="h-8 w-8 rounded-full bg-white/20 flex items-center justify-center">{icon}</div>
+    <div className="relative rounded-2xl p-[2px] bg-gradient-to-r from-fuchsia-500 via-amber-400 to-sky-500">
+      <div className="relative rounded-2xl bg-white/90 backdrop-blur px-3 py-2">
+        {/* colorful background accents */}
+        <div className="pointer-events-none absolute -top-6 -left-6 h-24 w-24 rounded-full bg-fuchsia-400/15 blur-2xl" />
+        <div className="pointer-events-none absolute -bottom-6 -right-6 h-24 w-24 rounded-full bg-sky-400/15 blur-2xl" />
+        {children}
       </div>
-      {top3.length === 0 ? (
-        <p className="p-6 text-center text-slate-500">No earnings recorded.</p>
-      ) : (
-        <ul className="divide-y divide-slate-200">
-          {top3.map((entry, index) => (
-            <li key={entry.user.id} className="p-4 flex items-center">
-              <RankBadge rank={index + 1} />
-              <Avatar user={entry.user} />
-              <div className="ml-4 flex-1 min-w-0">
-                <p className="font-semibold text-slate-800 truncate">{entry.user.name}</p>
-                <p className="text-sm text-slate-500">{formatCurrency(entry.earnings)}</p>
-              </div>
-              {index === 0 ? <CrownIcon className="h-5 w-5 text-amber-400" /> : null}
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
 
-function RankBadge({ rank }: { rank: number }) {
-  const classes =
-    rank === 1
-      ? "bg-amber-400 text-white"
-      : rank === 2
-      ? "bg-slate-400 text-white"
-      : rank === 3
-      ? "bg-orange-500 text-white"
-      : "bg-slate-200 text-slate-700";
+/* ================== Top 3 Premium Podium ================== */
+
+function TopThreePodium({ top3 }: { top3: LeaderboardEntry[] }) {
+  if (top3.length === 0) return null;
+
+  const first = top3[0];
+  const second = top3[1];
+  const third = top3[2];
+
   return (
-    <div className={`flex h-7 w-7 items-center justify-center rounded-full font-bold text-xs ${classes}`}>{rank}</div>
-  );
-}
+    <div className="mt-2">
+      <div className="flex items-end justify-center gap-8 md:gap-14">
+        {/* 2nd */}
+        {second && (
+          <PodiumPerson
+            rank={2}
+            entry={second}
+            size={140}
+            pillarHeight={130}
+          />
+        )}
 
-function Avatar({ user }: { user: User }) {
-  return user.imageUrl ? (
-    <Image src={user.imageUrl} alt={user.name} width={40} height={40} className="ml-3 rounded-full object-cover ring-1 ring-slate-200" />
-  ) : (
-    <div className="ml-3 w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center ring-1 ring-slate-200">
-      <UserIcon className="h-6 w-6 text-slate-400" />
+        {/* 1st */}
+        {first && (
+          <PodiumPerson
+            rank={1}
+            entry={first}
+            size={180}
+            pillarHeight={170}
+          />
+        )}
+
+        {/* 3rd */}
+        {third && (
+          <PodiumPerson
+            rank={3}
+            entry={third}
+            size={132}
+            pillarHeight={120}
+          />
+        )}
+      </div>
+      <div className="mt-3 text-center text-xs md:text-sm text-slate-500">
+        Chase the podium. Become a Top 3 earner!
+      </div>
     </div>
   );
 }
 
-function PodiumBar({
+function PodiumPerson({
   rank,
   entry,
-  max,
-  barColor,
-  crownColor,
+  size,
+  pillarHeight,
 }: {
   rank: 1 | 2 | 3;
   entry: LeaderboardEntry;
-  max: number;
-  barColor: string;
-  crownColor: string;
+  size: number;
+  pillarHeight: number;
 }) {
-  const baseHeight = 220;
-  const minHeight = 80;
-  const h = Math.max(minHeight, Math.round((entry.earnings / max) * baseHeight));
+  const { ringGradient, glowShadow, titleGradient, moneyGradient, badgeBg, badgeText, cardGradient, pillarGradient } =
+    getRankVisuals(rank);
 
   return (
     <div className="flex flex-col items-center">
       <div className="relative flex flex-col items-center">
-        <div className={`w-20 ${barColor} rounded-t-lg flex items-end justify-center`} style={{ height: `${h}px` }}>
-          {entry.user.imageUrl ? (
-            <Image
-              src={entry.user.imageUrl}
-              alt={entry.user.name}
-              width={44}
-              height={44}
-              className="rounded-full object-cover ring-2 ring-white -mb-4 shadow-md"
-            />
-          ) : (
-            <div className="w-11 h-11 rounded-full bg-white flex items-center justify-center ring-2 ring-white -mb-4 shadow-md">
-              <UserIcon className="h-6 w-6 text-slate-400" />
-            </div>
-          )}
-        </div>
+        {/* Rank badge */}
         <span
-          className={`absolute -top-4 left-1/2 -translate-x-1/2 h-8 w-8 rounded-full flex items-center justify-center text-white text-sm font-bold bg-gradient-to-br ${crownColor} shadow-md`}
+          className={[
+            "absolute -top-4 left-1/2 -translate-x-1/2 z-10",
+            "inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-extrabold shadow-md ring-1",
+            badgeBg, badgeText, "ring-white/40",
+          ].join(" ")}
           title={`Rank ${rank}`}
         >
-          {rank === 1 ? <CrownIcon /> : rank}
+          {rank === 1 ? <CrownIcon className="h-4 w-4" /> : `#${rank}`}
+          {rank === 1 ? "Champion" : rank === 2 ? "Runner‑up" : "Top 3"}
         </span>
+
+        {/* Colorful avatar with gradient ring + glow */}
+        <div
+          className={[
+            "relative rounded-full p-1.5 bg-gradient-to-br shadow-xl",
+            ringGradient,
+            glowShadow,
+            rank === 1 ? "animate-pulse" : "",
+          ].join(" ")}
+        >
+          <div className="rounded-full bg-white p-1">
+            {entry.user.imageUrl ? (
+              <Image
+                src={entry.user.imageUrl}
+                alt={entry.user.name}
+                width={size}
+                height={size}
+                className="rounded-full object-cover"
+              />
+            ) : (
+              <div
+                className="rounded-full bg-slate-200 flex items-center justify-center"
+                style={{ width: size, height: size }}
+              >
+                <UserIcon className="h-1/2 w-1/2 text-slate-400" />
+              </div>
+            )}
+          </div>
+
+          {/* Subtle sparkle accents */}
+          <div className="pointer-events-none absolute -right-3 -top-1 h-8 w-8 rounded-full bg-amber-300/20 blur-md" />
+          <div className="pointer-events-none absolute -left-3 -bottom-1 h-8 w-8 rounded-full bg-fuchsia-400/20 blur-md" />
+        </div>
+
+        {/* Colorful pillar (was silver) */}
+        <div className="mt-3">
+          <div
+            className={[
+              "w-28 rounded-t-2xl p-[2px] bg-gradient-to-r shadow-md",
+              pillarGradient,
+            ].join(" ")}
+            style={{ height: pillarHeight }}
+          >
+            <div className="h-full w-full rounded-t-2xl bg-white/85 backdrop-blur-sm ring-1 ring-white/40" />
+          </div>
+        </div>
       </div>
-      <span className="mt-3 max-w-[140px] text-center rounded-full bg-slate-800 text-white px-3 py-1 text-xs font-semibold truncate">
-        {entry.user.name}
-      </span>
-      <span className="mt-1 font-bold text-slate-900">{formatCurrency(entry.earnings)}</span>
+
+      {/* Colorful box under the avatar (name + earnings) */}
+      <div className="mt-3 w-full flex justify-center">
+        <div className={["relative inline-block rounded-xl p-[2px] bg-gradient-to-r", cardGradient, "shadow-sm"].join(" ")}>
+          <div className="rounded-xl bg-white/90 px-4 py-2 text-center backdrop-blur-sm">
+            <div
+              className={[
+                "max-w-[220px] truncate font-extrabold leading-tight",
+                rank === 1 ? "text-2xl md:text-3xl" : "text-xl md:text-2xl",
+                "bg-clip-text text-transparent bg-gradient-to-r",
+                titleGradient,
+              ].join(" ")}
+              title={entry.user.name}
+            >
+              {entry.user.name}
+            </div>
+            <div
+              className={[
+                "mt-0.5 font-black bg-clip-text text-transparent bg-gradient-to-r",
+                "text-lg md:text-xl",
+                moneyGradient,
+              ].join(" ")}
+            >
+              {formatCurrency(entry.earnings)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getRankVisuals(rank: 1 | 2 | 3) {
+  if (rank === 1) {
+    return {
+      ringGradient: "from-amber-400 via-orange-500 to-fuchsia-500",
+      glowShadow: "shadow-[0_0_0_6px_rgba(251,191,36,0.25)]",
+      titleGradient: "from-slate-900 via-slate-800 to-slate-900",
+      moneyGradient: "from-emerald-500 to-cyan-500",
+      badgeBg: "bg-amber-50",
+      badgeText: "text-amber-700",
+      cardGradient: "from-amber-400 via-orange-500 to-fuchsia-500",
+      pillarGradient: "from-amber-300 via-orange-400 to-fuchsia-500",
+    };
+  }
+  if (rank === 2) {
+    return {
+      ringGradient: "from-slate-300 via-gray-400 to-slate-600",
+      glowShadow: "shadow-[0_0_0_6px_rgba(148,163,184,0.25)]",
+      titleGradient: "from-slate-800 to-slate-600",
+      moneyGradient: "from-indigo-500 to-sky-500",
+      badgeBg: "bg-slate-100",
+      badgeText: "text-slate-700",
+      cardGradient: "from-slate-300 via-gray-400 to-slate-600",
+      pillarGradient: "from-sky-400 via-indigo-500 to-violet-600",
+    };
+  }
+  return {
+    ringGradient: "from-orange-400 via-rose-500 to-pink-600",
+    glowShadow: "shadow-[0_0_0_6px_rgba(249,115,22,0.22)]",
+    titleGradient: "from-rose-700 to-orange-600",
+    moneyGradient: "from-purple-500 to-fuchsia-500",
+    badgeBg: "bg-orange-50",
+    badgeText: "text-orange-700",
+    cardGradient: "from-rose-500 via-pink-500 to-orange-400",
+    pillarGradient: "from-orange-400 via-rose-500 to-pink-600",
+  };
+}
+
+/* ================== Rows 4–10 ================== */
+
+function LeaderboardRow({
+  rank,
+  entry,
+  max,
+}: {
+  rank: number;
+  entry: LeaderboardEntry;
+  max: number;
+}) {
+  const pct = Math.max(6, Math.round((entry.earnings / max) * 100)); // keep a minimum bar
+  const { bg, text } = rankBadgeColors(rank);
+  const ringClass =
+    rank === 1 ? "ring-amber-400" : rank === 2 ? "ring-slate-400" : rank === 3 ? "ring-orange-400" : "ring-slate-200";
+
+  return (
+    <li className="px-2 py-3">
+      <div className="group flex items-center gap-4">
+        {/* Rank badge */}
+        <div
+          className={[
+            "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-extrabold",
+            "shadow-sm ring-1",
+            bg, text,
+          ].join(" ")}
+          title={`Rank ${rank}`}
+        >
+          {rank <= 3 ? <CrownIcon className="h-4 w-4" /> : rank}
+        </div>
+
+        {/* Avatar */}
+        {entry.user.imageUrl ? (
+          <Image
+            src={entry.user.imageUrl}
+            alt={entry.user.name}
+            width={44}
+            height={44}
+            className={[
+              "h-11 w-11 rounded-full object-cover",
+              "ring-2 ring-offset-2 ring-offset-white transition",
+              ringClass,
+            ].join(" ")}
+          />
+        ) : (
+          <div
+            className={[
+              "h-11 w-11 rounded-full bg-slate-200 flex items-center justify-center",
+              "ring-2 ring-offset-2 ring-offset-white",
+              ringClass,
+            ].join(" ")}
+          >
+            <UserIcon className="h-6 w-6 text-slate-400" />
+          </div>
+        )}
+
+        {/* Name + Animated Colorful Progress */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-3">
+            <p className="truncate font-semibold text-slate-900">
+              {entry.user.name}
+            </p>
+            <span className="shrink-0 font-semibold text-slate-900" title={formatCurrency(entry.earnings)}>
+              {formatCurrency(entry.earnings)}
+            </span>
+          </div>
+
+          <div className="mt-2 h-2.5 w-full rounded-full bg-slate-100/60 overflow-hidden ring-1 ring-white/40">
+            <div
+              className={[
+                "h-full rounded-full bg-gradient-to-r",
+                barGradient(rank),
+                "animate-gradient-x",
+              ].join(" ")}
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function rankBadgeColors(rank: number) {
+  if (rank === 1) return { bg: "bg-gradient-to-br from-amber-400 to-yellow-500", text: "text-white" };
+  if (rank === 2) return { bg: "bg-gradient-to-br from-slate-400 to-gray-500", text: "text-white" };
+  if (rank === 3) return { bg: "bg-gradient-to-br from-orange-400 to-orange-600", text: "text-white" };
+  return { bg: "bg-slate-200", text: "text-slate-800" };
+}
+
+// Rotating sets of vibrant gradients per rank for extra color
+function barGradient(rank: number) {
+  const sets = [
+    "from-fuchsia-400 via-rose-400 to-orange-400",
+    "from-emerald-400 via-teal-400 to-cyan-400",
+    "from-amber-400 via-yellow-400 to-rose-400",
+    "from-sky-400 via-indigo-400 to-violet-500",
+    "from-pink-400 via-rose-500 to-red-500",
+  ];
+  const i = (rank - 1) % sets.length;
+  return sets[i];
+}
+
+/* ================== Skeleton ================== */
+
+function PodiumSkeleton() {
+  return (
+    <div className="mt-1">
+      <div className="flex items-end justify-center gap-8 md:gap-14">
+        {[130, 170, 120].map((h, i) => (
+          <div key={i} className="flex flex-col items-center">
+            <div className="h-9 w-24 rounded-full bg-slate-200 animate-pulse -mb-2" />
+            <div className="h-28 w-28 md:h-36 md:w-36 rounded-full bg-slate-200 animate-pulse" />
+            <div className="mt-3 w-28 rounded-t-2xl bg-slate-100" style={{ height: h }} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -499,6 +681,20 @@ function InfinityIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
       <path strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" d="M18.5 12c0 2.485-2.015 4.5-4.5 4.5-3.5 0-4.5-4.5-8-4.5 0-2.485 2.015-4.5 4.5-4.5 3.5 0 4.5 4.5 8 4.5z" />
+    </svg>
+  );
+}
+function TrophyIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M4 5h2a2 2 0 012-2h8a2 2 0 012 2h2a1 1 0 011 1v1a5 5 0 01-5 5h-1.28A6 6 0 0113 15.917V18h3a1 1 0 110 2H8a1 1 0 110-2h3v-2.083A6 6 0 017.28 12H6a5 5 0 01-5-5V6a1 1 0 011-1zm16 2V7h-1.06a3.002 3.002 0 01-2.815 2.995A3.993 3.993 0 0017 7h3zm-16 0a3.993 3.993 0 001.875 2.995A3.003 3.003 0 014.06 7H1v0z" />
+    </svg>
+  );
+}
+function SparklesIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" {...props}>
+      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l.803 2.47a1 1 0 00.95.69h2.596c.969 0 1.371 1.24.588 1.81l-2.102 1.527a1 1 0 00-.364 1.118l.803 2.47c.3.921-.755 1.688-1.54 1.118l-2.102-1.527a1 1 0 00-1.176 0L6.206 14.15c-.784.57-1.838-.197-1.539-1.118l.803-2.47a1 1 0 00-.364-1.118L3.004 7.897c-.784-.57-.38-1.81.588-1.81h2.596a1 1 0 00.95-.69l.911-2.47z" />
     </svg>
   );
 }

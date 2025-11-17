@@ -1,0 +1,1 @@
+import "@mlc-ai/web-llm/dist/worker.js";

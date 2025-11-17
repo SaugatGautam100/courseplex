@@ -23,13 +23,13 @@ interface UserSidebarProps {
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/user/dashboard", icon: DashboardIcon },
   { label: "Study Page", href: "/user/study-page", icon: BookIcon },
-  { label: "Buy More Courses", href: "/user/upgrade-course", icon: RocketIcon },
+  { label: "Tutorials", href: "/user/tutorials", icon: PlayCircleIcon }, // <-- ADDED
+  { label: "Upgrade Course", href: "/user/upgrade-course", icon: RocketIcon },
   { label: "Leaderboard", href: "/user/leaderboard", icon: TrophyIcon },
   { label: "Affiliate", href: "/user/affiliate", icon: UsersIcon },
   { label: "Transactions", href: "/user/transactions", icon: ReceiptIcon },
   { label: "Withdrawal", href: "/user/withdraw", icon: WalletIcon },
   { label: "KYC", href: "/user/kyc", icon: IdCardIcon },
-  // New: Edit Profile
   { label: "Edit Profile", href: "/user/profile", icon: EditIcon },
 ];
 
@@ -135,6 +135,15 @@ function BookIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+    </svg>
+  );
+}
+// NEW ICON for Tutorials
+function PlayCircleIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" {...props}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z" />
     </svg>
   );
 }

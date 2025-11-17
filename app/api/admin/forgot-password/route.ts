@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        to: 'courseplex.nep@gmail.com',
+        to: 'appplex100@gmail.com',
         subject: `Admin Password Reset Request for ${email}`,
         htmlContent: `
           <h2>Admin Password Reset Request</h2>

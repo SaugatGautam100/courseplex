@@ -37,6 +37,16 @@ type PackagesMapRaw = Record<
     highlight: boolean;
     badge: string;
     features?: string[]; // legacy
+
+    // NEW: Discounts
+    discountActive?: boolean;
+    discountPercent?: number;
+    discountLabel?: string;
+
+    // NEW: Reviews
+    showRating?: boolean;
+    rating?: number;
+    ratingCount?: number;
   }
 >;
 
@@ -57,6 +67,16 @@ type CourseBundle = {
   highlight: boolean;
   badge: string;
   subCourses?: string[]; // titles of included sub-courses
+
+  // NEW: Discounts
+  discountActive?: boolean;
+  discountPercent?: number;
+  discountLabel?: string;
+
+  // NEW: Reviews
+  showRating?: boolean;
+  rating?: number;
+  ratingCount?: number;
 };
 
 type SubCourse = {
@@ -137,6 +157,16 @@ export default function Page() {
               highlight: pkg.highlight,
               badge: pkg.badge,
               subCourses: subCourseTitles,
+
+              // NEW: Discounts & Reviews
+              discountActive: Boolean(pkg.discountActive),
+              discountPercent:
+                typeof pkg.discountPercent === "number" ? pkg.discountPercent : 0,
+              discountLabel: pkg.discountLabel || "",
+              showRating: Boolean(pkg.showRating),
+              rating: typeof pkg.rating === "number" ? pkg.rating : 0,
+              ratingCount:
+                typeof pkg.ratingCount === "number" ? pkg.ratingCount : 0,
             };
           }
         );
@@ -267,7 +297,7 @@ export default function Page() {
               Master complete tracks
             </h2>
             <p className="mt-3 text-base text-slate-600 sm:text-lg">
-              Each course is a bundle of sub-courses like Frontend, Backend, and Database.
+              Each course is a bundle of focused sub-courses and modules tailored to real career paths across Tech, Business, Design, Marketing, and more.
             </p>
           </header>
 
@@ -340,8 +370,7 @@ function Hero({
             </h1>
 
             <p className="mt-4 max-w-xl text-base text-slate-600 sm:text-lg">
-              Choose a Course like Website Development, then progress through Sub-courses:
-              Frontend, Backend, Database — all in one place.
+              Choose a career path or skill track — from Tech to Business, Design, Marketing, and more — then progress through structured sub-courses with real projects.
             </p>
 
             <div className="mt-7 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
@@ -399,7 +428,7 @@ function HeroMedia() {
         </div>
       </div>
 
-      {/* Floating cards (keep your existing ones) */}
+      {/* Floating cards */}
       <div className="pointer-events-none absolute -left-6 -bottom-6 h-28 w-40 overflow-hidden rounded-xl bg-white shadow-md ring-1 ring-slate-200 sm:-left-10 sm:-bottom-8 sm:h-32 sm:w-48">
         <Image
           src="https://images.unsplash.com/photo-1501504905252-473c47e087f8?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=774"
@@ -477,9 +506,14 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
   const subTitles = course.subCourses || [];
   const extra = Math.max(0, subTitles.length - 4);
 
-  const price = Number(course.price || 0);
-  const affiliateEarn = Math.floor((price * AFFILIATE_PCT) / 100);
-  const buyerCashback = Math.floor((price * CASHBACK_PCT) / 100);
+  const basePrice = Number(course.price || 0);
+  const discountPct = Math.max(0, Math.min(100, Number(course.discountPercent || 0)));
+  const hasDiscount = Boolean(course.discountActive && discountPct > 0);
+  const finalPrice = hasDiscount ? Math.max(0, Math.round(basePrice - (basePrice * discountPct) / 100)) : basePrice;
+
+  // Calculate affiliate and cashback against final payable price
+  const affiliateEarn = Math.floor((finalPrice * AFFILIATE_PCT) / 100);
+  const buyerCashback = Math.floor((finalPrice * CASHBACK_PCT) / 100);
 
   const coverSrc =
     course.imageUrl?.trim() ? course.imageUrl : "/images/course-fallback.jpg";
@@ -508,11 +542,30 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
             </span>
           </div>
         )}
+        {hasDiscount && (
+          <div className="absolute top-4 left-4">
+            <span className="rounded-full bg-emerald-600/95 px-3 py-1 text-xs font-semibold text-white shadow-md ring-1 ring-emerald-400/60">
+              {course.discountLabel?.trim() ? course.discountLabel : `-${discountPct}%`}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Body */}
       <div className="flex flex-1 flex-col p-5">
         <h3 className="text-lg font-bold text-slate-900">{course.name}</h3>
+
+        {/* Rating (admin-controlled) */}
+        {course.showRating ? (
+          <div className="mt-1 flex items-center gap-1 text-sm">
+            <StarIcon className="h-4 w-4 text-amber-500" />
+            <span className="font-semibold text-slate-900">{Number(course.rating || 0).toFixed(1)}</span>
+            <span className="text-slate-500">/ 5</span>
+            {typeof course.ratingCount === "number" && course.ratingCount > 0 ? (
+              <span className="ml-1 text-xs text-slate-500">({course.ratingCount.toLocaleString()})</span>
+            ) : null}
+          </div>
+        ) : null}
 
         {/* Sub-courses chips */}
         {!!subTitles.length && (
@@ -534,11 +587,28 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
         )}
 
         {/* Price */}
-        <div className="mt-4 flex items-baseline gap-1">
-          <span className="text-3xl font-extrabold tracking-tight">
-            Rs {price.toLocaleString()}
-          </span>
-          <span className="text-sm text-slate-500">/ lifetime</span>
+        <div className="mt-4">
+          {hasDiscount ? (
+            <div className="flex items-center gap-2">
+              <span className="text-3xl font-extrabold tracking-tight text-emerald-700">
+                Rs {finalPrice.toLocaleString()}
+              </span>
+              <span className="text-sm text-slate-400 line-through">
+                Rs {basePrice.toLocaleString()}
+              </span>
+              <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                -{discountPct}%
+              </span>
+              <span className="text-sm text-slate-500">/ lifetime</span>
+            </div>
+          ) : (
+            <div className="flex items-baseline gap-1">
+              <span className="text-3xl font-extrabold tracking-tight">
+                Rs {basePrice.toLocaleString()}
+              </span>
+              <span className="text-sm text-slate-500">/ lifetime</span>
+            </div>
+          )}
         </div>
 
         {/* Payout + Cashback */}
@@ -547,7 +617,7 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
             Affiliate Earn: Rs {affiliateEarn.toLocaleString()}
           </div>
           <div className="inline-flex items-center justify-center gap-1 rounded-full bg-sky-50 px-2 py-1 font-semibold text-sky-700 ring-1 ring-sky-200">
-            Cashback: Rs {buyerCashback.toLocaleString()}
+            Affiliated Cashback: Rs {buyerCashback.toLocaleString()}
           </div>
         </div>
 

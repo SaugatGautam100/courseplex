@@ -133,7 +133,7 @@ export default function KycPage() {
             </div>
             
             <InputField label="Full Address" id="address" value={formData.address} onChange={handleInputChange} required />
-            <InputField label="Citizenship / License No." id="citizenshipNo" value={formData.citizenshipNo} onChange={handleInputChange} required />
+            <InputField label="Citizenship / License  / Birth Certificate No." id="citizenshipNo" value={formData.citizenshipNo} onChange={handleInputChange} required />
             
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
               <InputField label="Father's Name" id="fatherName" value={formData.fatherName} onChange={handleInputChange} required />
