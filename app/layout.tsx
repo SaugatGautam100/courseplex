@@ -11,93 +11,135 @@ const roboto = Roboto({
   display: "swap",
 });
 
-// --- SEO METADATA OBJECT ---
+// ─────────────────────────────
+// SEO METADATA
+// ─────────────────────────────
 export const metadata: Metadata = {
-  // --- Core Metadata ---
+  applicationName: "Plex Courses",
   title: {
-    template: "%s | Plex Courses", // Appends site name to sub-page titles
-    default: "Plex Courses - #1 Digital Marketing & Affiliate Courses in Nepal", // Default title for homepage
+    template: "%s | Plex Courses",
+    default: "Plex Courses - #1 Digital Marketing & Affiliate Courses in Nepal",
   },
-  description: "Join Plex Courses for Nepal's top-rated digital marketing, affiliate marketing, and SEO courses. Learn practical skills, get career guidance, and start earning online. Enroll now!",
-  
-  // --- Keywords (Extensive List) ---
-  keywords: [
-    // Primary Keywords
-    "digital marketing course in nepal", "online courses nepal", "Plex Courses", "affiliate marketing nepal", "seo training nepal",
-    "learn digital marketing nepal", "social media marketing course nepal", "online earning in nepal",
-    
-    // Course-Specific Keywords
-    "seo course", "content marketing course", "ppc advertising course", "google ads training", "facebook ads course",
-    "instagram marketing", "email marketing training", "online business nepal", "freelancing course nepal",
-    
-    // Location-Based Keywords
-    "digital marketing training kathmandu", "seo training in kathmandu", "online jobs in nepal for students",
-    "best it training in nepal", "computer training institute in kathmandu", "digital marketing agency nepal",
+  description:
+    "Plex Courses offers Nepal's top-rated digital marketing, SEO, and affiliate marketing courses. Learn practical skills, grow your career, and start earning online with step-by-step tracks and certificates.",
 
-    // Long-Tail & Question-Based Keywords
-    "how to start digital marketing in nepal", "how to earn money online in nepal", "best way to learn seo",
-    "digital marketing course fees in nepal", "affiliate marketing for beginners nepal", "make money online nepal",
-    "part-time jobs for students in kathmandu", "work from home nepal",
-    
-    // Broader Skill-Related Keywords
-    "graphic design course nepal", "video editing course", "web development basics", "e-commerce nepal",
-    "online marketing strategy", "digital skills training", "career development nepal",
-    
-    // Competitor & Alternative Keywords
-    "it training nepal", "broadway infosys nepal", "tech axis nepal", "e-digital nepal", "udemy nepal", "coursera nepal",
-    
-    // Extensive List (as requested)
-    "advanced seo techniques", "local seo nepal", "technical seo audit", "keyword research tools", "link building strategies",
-    "social media management tools", "facebook marketing strategy", "instagram growth hacks", "youtube marketing course",
-    "linkedin marketing", "twitter for business", "content creation strategy", "blogging for money nepal",
-    "copywriting course", "google analytics training", "google tag manager course", "data analysis for marketers",
-    "conversion rate optimization", "cro techniques", "a/b testing", "email automation", "mailchimp tutorial",
-    "affiliate marketing with amazon", "clickbank nepal", "how to start a blog in nepal", "online tutoring nepal",
-    "virtual assistant jobs nepal", "online transcription jobs", "digital nomad nepal", "passive income nepal",
-    "stock market nepal for beginners", "nepal share market", "online payment gateways in nepal", "esewa", "khalti",
-    "ime pay", "digital nepal framework", "it jobs in kathmandu", "remote jobs nepal", "best affiliate programs for nepalis",
-    // ... continue adding up to 1000 keywords if you wish, but the above are high-value.
-    // The key is quality over quantity.
+  // Google does not use meta-keywords for ranking, but it is safe to keep a
+  // focused list here. If you want thousands, you can move them to a separate
+  // file and spread them into this array.
+  keywords: [
+    // Brand & generic
+    "Plex Courses",
+    "plexcourses",
+    "Plex Courses Nepal",
+    "online courses nepal",
+    "e-learning nepal",
+    "learn online nepal",
+
+    // Main offerings
+    "digital marketing course in nepal",
+    "seo course nepal",
+    "affiliate marketing nepal",
+    "social media marketing course nepal",
+    "facebook ads course nepal",
+    "google ads training nepal",
+    "instagram marketing nepal",
+    "content marketing course nepal",
+    "email marketing training nepal",
+    "youtube marketing course nepal",
+
+    // Money / career
+    "online earning in nepal",
+    "make money online nepal",
+    "freelancing course nepal",
+    "work from home nepal",
+    "online jobs in nepal for students",
+    "part time jobs nepal students",
+
+    // Location-based
+    "digital marketing training kathmandu",
+    "seo training kathmandu",
+    "it training nepal",
+    "best it training in nepal",
+    "computer institute kathmandu",
+
+    // Courses & skills
+    "graphic design course nepal",
+    "video editing course nepal",
+    "ecommerce course nepal",
+    "wordpress course nepal",
+    "web development basics nepal",
+    "business course nepal",
+    "career development nepal",
+
+    // Affiliate / referral angle
+    "become affiliate nepal",
+    "affiliate program nepal",
+    "high paying affiliate program nepal",
+    "student affiliate program nepal",
+
+    // Long-tail questions & intent
+    "how to start digital marketing in nepal",
+    "how to earn money online in nepal",
+    "best digital marketing course in nepal",
+    "digital marketing course fees in nepal",
+    "best way to learn seo in nepal",
+    "affiliate marketing for beginners nepal",
   ],
-  
-  // --- Author & Branding ---
-  authors: [{ name: "Plex Courses", url: "https://sajilointerior.com.np" }],
+
+  metadataBase: new URL("https://plexcourses.com"),
+  alternates: {
+    canonical: "/",
+  },
+
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: {
+      index: true,
+      follow: true,
+      "max-snippet": -1,
+      "max-image-preview": "large",
+      "max-video-preview": -1,
+    },
+  },
+
+  // Update this once you create a Google Search Console property for plexcourses.com
+  verification: {
+    google: "N4qYDAkaYzmuSlEGwJInBNKL8UjgNkruWGO9-pwZZOg",
+  },
+
+  authors: [{ name: "Plex Courses", url: "https://plexcourses.com" }],
   creator: "App Plex",
   publisher: "Plex Courses",
 
-  // --- Technical SEO ---
-  metadataBase: new URL("https://sajilointerior.com.np"),
-  alternates: {
-    canonical: '/',
-  },
-
-  // --- Social Media & Sharing (Open Graph for Facebook, LinkedIn, etc.) ---
   openGraph: {
     title: "Plex Courses - #1 Digital Marketing & Affiliate Courses",
-    description: "Learn practical skills in SEO, social media, and affiliate marketing to build your career and start earning online.",
-    url: "https://sajilointerior.com.np",
+    description:
+      "Master digital marketing, SEO, and affiliate marketing with Plex Courses. Structured tracks, mentor support, and completion certificates.",
+    url: "https://plexcourses.com",
     siteName: "Plex Courses",
     images: [
       {
-        url: "/sajilointerior-og-image.png", // Place this image in your `public` folder
+        // put this file in /public on plexcourses.com
+        url: "/images/plexcourseslogo.png",
         width: 1200,
         height: 630,
-        alt: "Plex Courses - Learn and Earn",
+        alt: "Plex Courses - Learn and Earn Online",
       },
     ],
     locale: "en_US",
     type: "website",
   },
-  
-  // --- Twitter-Specific Card ---
+
   twitter: {
     card: "summary_large_image",
     title: "Plex Courses - #1 Digital Marketing & Affiliate Courses",
-    description: "Learn practical skills in SEO, social media, and affiliate marketing to build your career and start earning online.",
-    images: ["/sajilointerior-og-image.png"], // Must be an absolute URL in production
+    description:
+      "Learn SEO, social media, and affiliate marketing with Plex Courses and start earning online from Nepal.",
+    images: ["/plexcourses-og-image.png"],
+    creator: "@plexcourses", // change if you have a real handle
   },
-  
-  // --- Icons ---
+
   icons: {
     icon: "/favicon.ico",
     shortcut: "/favicon-16x16.png",
@@ -105,24 +147,94 @@ export const metadata: Metadata = {
   },
 };
 
-// --- STRUCTURED DATA (JSON-LD) FOR RICH RESULTS ---
-const jsonLd = {
+// ─────────────────────────────
+// STRUCTURED DATA (JSON‑LD)
+// ─────────────────────────────
+
+// 1) Organization
+const organizationJsonLd = {
   "@context": "https://schema.org",
   "@type": "Organization",
-  "name": "Plex Courses",
-  "url": "https://sajilointerior.com.np",
-  "logo": "https://sajilointerior.com.np/images/courseplexlogo.png", // MUST be an absolute URL
-  "contactPoint": {
+  name: "Plex Courses",
+  url: "https://plexcourses.com",
+  logo: "https://plexcourses.com/images/courseplexlogo.png",
+  contactPoint: {
     "@type": "ContactPoint",
-    "telephone": "+977-970-572-6179",
-    "contactType": "Customer Service"
+    telephone: "+977-9866294492",
+    contactType: "Customer Service",
+    areaServed: "NP",
+    availableLanguage: ["en", "ne"],
   },
-  "sameAs": [
-    // Add links to your social media profiles here if you have them
-    // "https://www.facebook.com/YourPage",
-    // "https://www.instagram.com/YourProfile",
-    // "https://www.youtube.com/YourChannel"
-  ]
+  sameAs: [
+    // Add real profiles when you have them:
+    // "https://www.facebook.com/yourpage",
+    // "https://www.instagram.com/yourprofile",
+    // "https://www.youtube.com/@yourchannel"
+  ],
+};
+
+// 2) WebSite with SearchAction – use your existing /courses search param
+const websiteJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: "Plex Courses",
+  url: "https://plexcourses.com",
+  potentialAction: {
+    "@type": "SearchAction",
+    target:
+      "https://plexcourses.com/courses?search={search_term_string}",
+    "query-input": "required name=search_term_string",
+  },
+};
+
+// 3) SiteNavigationElement – matches your header + important CTAs
+const siteNavigationJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "ItemList",
+  itemListElement: [
+    {
+      "@type": "SiteNavigationElement",
+      position: 1,
+      name: "Home",
+      url: "https://plexcourses.com/",
+    },
+    {
+      "@type": "SiteNavigationElement",
+      position: 2,
+      name: "Courses",
+      url: "https://plexcourses.com/courses",
+      description: "Browse all Plex Courses bundles and sub-courses.",
+    },
+    {
+      "@type": "SiteNavigationElement",
+      position: 3,
+      name: "Services",
+      url: "https://plexcourses.com/services",
+      description: "Digital marketing and related services by Plex Courses team.",
+    },
+    {
+      "@type": "SiteNavigationElement",
+      position: 4,
+      name: "About Us",
+      url: "https://plexcourses.com/about",
+      description: "Learn more about Plex Courses and our mission.",
+    },
+    {
+      "@type": "SiteNavigationElement",
+      position: 5,
+      name: "Become an Affiliate",
+      url: "https://plexcourses.com/signup",
+      description:
+        "Sign up to Plex Courses and join our affiliate program to earn commissions.",
+    },
+    {
+      "@type": "SiteNavigationElement",
+      position: 6,
+      name: "Contact",
+      url: "https://plexcourses.com/contact",
+      description: "Contact Plex Courses for support and inquiries.",
+    },
+  ],
 };
 
 export default function RootLayout({
@@ -133,19 +245,29 @@ export default function RootLayout({
   return (
     <html lang="en" className="overflow-x-hidden scroll-smooth">
       <head>
-      <meta name="google-site-verification" content="N4qYDAkaYzmuSlEGwJInBNKL8UjgNkruWGO9-pwZZOg" />
-        {/* Structured Data for Google */}
+        {/* All structured data together for Google */}
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify([
+              organizationJsonLd,
+              websiteJsonLd,
+              siteNavigationJsonLd,
+            ]),
+          }}
         />
-        {/* Google Icons */}
-        <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+        {/* Google Material Icons */}
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
+        />
       </head>
-      <body className={`${roboto.className} bg-slate-50 text-slate-800 antialiased`}>
-      
+      <body
+        className={`${roboto.className} bg-slate-50 text-slate-800 antialiased`}
+      >
+        <Header />
         {children}
-     
+        <Footer />
       </body>
     </html>
   );
