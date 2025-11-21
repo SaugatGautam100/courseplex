@@ -74,7 +74,7 @@ export default function PrivacyPolicyPage() {
           <h3 className="text-2xl font-extrabold text-center mb-8">Business Certificate</h3>
           <div className="flex justify-center">
             <Image
-              src="/images/shn-buisnesscertificate.jpg" // REPLACE with your actual image path
+              src="/images/business_certificate.jpg" // REPLACE with your actual image path
               alt="Plex Courses Business Certificate"
               width={800}
               height={600}

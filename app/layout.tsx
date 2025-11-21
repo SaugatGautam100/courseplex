@@ -265,9 +265,9 @@ export default function RootLayout({
       <body
         className={`${roboto.className} bg-slate-50 text-slate-800 antialiased`}
       >
-        <Header />
+       
         {children}
-        <Footer />
+      
       </body>
     </html>
   );
