@@ -1,4 +1,3 @@
-// lib/server/email.ts
 import nodemailer from "nodemailer";
 
 export type SendEmailParams = {
@@ -7,14 +6,10 @@ export type SendEmailParams = {
   html?: string;
   text?: string;
   replyTo?: string;
-  fromName?: string;   // optional display name override
-  fromEmail?: string;  // optional email override
+  fromName?: string;
+  fromEmail?: string;
 };
 
-/**
- * Build a standard "From" header string.
- * Used only for sendmail fallback.
- */
 function buildFromHeader(
   fromName?: string,
   fromEmail?: string,
@@ -27,13 +22,9 @@ function buildFromHeader(
 }
 
 /**
- * Primary helper – chooses transport based on MAIL_TRANSPORT:
- *
- * MAIL_TRANSPORT=cloudflare-worker  (recommended on Firebase)
- *   - uses Cloudflare Worker + MailChannels
- *
- * MAIL_TRANSPORT=sendmail          (for old cPanel installs only)
- *   - uses local sendmail via Nodemailer
+ * MAIL_TRANSPORT selects how we send mail:
+ *  - "cloudflare-worker": use Cloudflare Worker + MailChannels (recommended)
+ *  - "sendmail": local sendmail via Nodemailer (only for cPanel/VMs)
  */
 export async function sendEmail(params: SendEmailParams): Promise<void> {
   const { to, subject, html, text, replyTo, fromName, fromEmail } = params;
@@ -46,7 +37,7 @@ export async function sendEmail(params: SendEmailParams): Promise<void> {
     .toLowerCase()
     .trim();
 
-  // ------------- Cloudflare Worker transport (recommended) -------------
+  // -------- Cloudflare Worker transport --------
   if (transport === "cloudflare-worker") {
     const workerUrl = process.env.CLOUDFLARE_WORKER_URL;
     const workerSecret = process.env.CLOUDFLARE_WORKER_SECRET;
@@ -63,7 +54,7 @@ export async function sendEmail(params: SendEmailParams): Promise<void> {
     }
 
     const payload = {
-      to: Array.isArray(to) ? to[0] : to, // Worker version expects a single "to"
+      to: Array.isArray(to) ? to[0] : to,
       from: {
         email: finalFromEmail,
         name: finalFromName,
@@ -92,7 +83,7 @@ export async function sendEmail(params: SendEmailParams): Promise<void> {
     return;
   }
 
-  // ------------- sendmail transport (legacy / cPanel only) -------------
+  // -------- sendmail transport (legacy / not used on Firebase) --------
   if (transport === "sendmail") {
     const fromHeader = buildFromHeader(
       fromName,
@@ -124,10 +115,7 @@ export async function sendEmail(params: SendEmailParams): Promise<void> {
   );
 }
 
-/**
- * Backward compatibility – route old Gmail helper to the main helper.
- * All existing imports of sendEmailViaGmailAPI will now use your Cloudflare Worker.
- */
+/** Backwards compatibility alias – existing code can keep using this name. */
 export async function sendEmailViaGmailAPI(
   params: SendEmailParams
 ): Promise<void> {
