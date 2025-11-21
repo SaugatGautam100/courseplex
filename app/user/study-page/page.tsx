@@ -10,7 +10,7 @@ import type { SVGProps } from "react";
 /* ================== Types ================== */
 type Video = { id: string; title: string; url: string };
 type VideosMap = { [key: string]: Omit<Video, "id"> };
-type Course = { id:string; title: string; videos?: VideosMap };
+type Course = { id: string; title: string; videos?: VideosMap };
 type Package = {
   id: string;
   name: string;
@@ -60,7 +60,7 @@ async function loadScript(src: string) {
     const existing = document.querySelector(`script[src="${src}"]`);
     if (existing) return resolve();
     const s = document.createElement("script");
-s.src = src;
+    s.src = src;
     s.async = true;
     s.onload = () => resolve();
     s.onerror = () => reject(new Error("Failed to load script: " + src));
@@ -116,8 +116,16 @@ export default function StudyPage() {
 
   const [showCertModal, setShowCertModal] = useState(false);
   const certRef = useRef<HTMLDivElement | null>(null);
-  
-  const issueDate = useMemo(() => new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), []);
+
+  const issueDate = useMemo(
+    () =>
+      new Date().toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+      }),
+    []
+  );
 
   // Auth + live user node
   useEffect(() => {
@@ -157,7 +165,10 @@ export default function StudyPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [pSnap, cSnap] = await Promise.all([get(dbRef(database, "packages")), get(dbRef(database, "courses"))]);
+        const [pSnap, cSnap] = await Promise.all([
+          get(dbRef(database, "packages")),
+          get(dbRef(database, "courses")),
+        ]);
         const pVal = (pSnap.val() as PackagesDb) || {};
         const cVal = (cSnap.val() as CoursesDb) || {};
 
@@ -186,7 +197,11 @@ export default function StudyPage() {
 
   // Build accessible package ids
   const accessiblePackageIds = useMemo(() => {
-    const specialActive = !!(specialAccess && (specialAccess.active ?? specialAccess.enabled) && specialAccess.packageId);
+    const specialActive = !!(
+      specialAccess &&
+      (specialAccess.active ?? specialAccess.enabled) &&
+      specialAccess.packageId
+    );
     if (specialActive) {
       return Object.keys(packagesMap);
     }
@@ -203,7 +218,9 @@ export default function StudyPage() {
       setSelectedVideo(null);
       return;
     }
-    setSelectedPackageId((prev) => (prev && accessiblePackageIds.includes(prev) ? prev : accessiblePackageIds[0] || null));
+    setSelectedPackageId((prev) =>
+      prev && accessiblePackageIds.includes(prev) ? prev : accessiblePackageIds[0] || null
+    );
   }, [accessiblePackageIds]);
 
   // When package changes, set first sub-course and first video
@@ -239,9 +256,18 @@ export default function StudyPage() {
   }, [selectedSubCourseId, coursesMap]);
 
   // Derived data
-  const currentVideoId = useMemo(() => (selectedVideo ? getYouTubeId(selectedVideo.url) : null), [selectedVideo]);
-  const selectedPackage = useMemo(() => (selectedPackageId ? packagesMap[selectedPackageId] : null), [selectedPackageId, packagesMap]);
-  const selectedSubCourse = useMemo(() => (selectedSubCourseId ? coursesMap[selectedSubCourseId] : null), [selectedSubCourseId, coursesMap]);
+  const currentVideoId = useMemo(
+    () => (selectedVideo ? getYouTubeId(selectedVideo.url) : null),
+    [selectedVideo]
+  );
+  const selectedPackage = useMemo(
+    () => (selectedPackageId ? packagesMap[selectedPackageId] : null),
+    [selectedPackageId, packagesMap]
+  );
+  const selectedSubCourse = useMemo(
+    () => (selectedSubCourseId ? coursesMap[selectedSubCourseId] : null),
+    [selectedSubCourseId, coursesMap]
+  );
 
   const selectedSubCourseVideoList = useMemo(() => {
     if (!selectedSubCourse?.videos) return [];
@@ -261,7 +287,8 @@ export default function StudyPage() {
     subIds.forEach((cid) => {
       const vids = Object.keys(coursesMap[cid]?.videos || {});
       total += vids.length;
-      const doneHere = Object.keys(progress[cid] || {}).filter((vid) => progress[cid]?.[vid]).length;
+      const doneHere = Object.keys(progress[cid] || {}).filter((vid) => progress[cid]?.[vid])
+        .length;
       done += Math.min(doneHere, vids.length);
     });
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -283,7 +310,9 @@ export default function StudyPage() {
     if (!certRef.current || !selectedPackage) return;
     try {
       if (!window.html2canvas) {
-        await loadScript("https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js");
+        await loadScript(
+          "https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"
+        );
       }
 
       // Make sure all images are loaded and DOM is painted
@@ -301,8 +330,8 @@ export default function StudyPage() {
       }
 
       const canvas = await window.html2canvas!(certRef.current, {
-        backgroundColor: null, // Use transparent background for PNG
-        scale: 2,
+        backgroundColor: "#ffffff",
+        scale: Math.max(2, Math.min(3, window.devicePixelRatio || 2)),
         useCORS: true,
         allowTaint: false,
         logging: false,
@@ -315,9 +344,8 @@ export default function StudyPage() {
       a.href = data;
       a.download = filename;
       document.body.appendChild(a);
-a.click();
+      a.click();
       a.remove();
-      
     } catch (e) {
       console.error("Certificate download failed:", e);
       alert("Could not generate certificate. Please try again.");
@@ -339,7 +367,9 @@ a.click();
     return (
       <div className="text-center p-8 max-w-lg mx-auto">
         <h1 className="text-2xl font-bold text-slate-900">No Courses Available</h1>
-        <p className="mt-2 text-slate-600">It looks like you haven’t enrolled in any main course yet.</p>
+        <p className="mt-2 text-slate-600">
+          It looks like you haven’t enrolled in any main course yet.
+        </p>
         <Link
           href="/user/upgrade-course"
           className="mt-4 inline-flex items-center rounded-full bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
@@ -350,7 +380,7 @@ a.click();
     );
   }
 
-  const brand = "Course Plex";
+  const brand = "Plex Courses";
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-16">
@@ -360,8 +390,13 @@ a.click();
           <SparkleIcon className="h-4 w-4" />
           {brand} Study
         </div>
-        <h1 className="text-3xl font-black text-slate-900 tracking-tight">Your Learning Space</h1>
-        <p className="text-slate-600">Welcome back, {userName.split(" ")[0]}! Choose a course, complete all content, and earn your certificate.</p>
+        <h1 className="text-3xl font-black text-slate-900 tracking-tight">
+          Your Learning Space
+        </h1>
+        <p className="text-slate-600">
+          Welcome back, {userName.split(" ")[0]}! Choose a course, complete all content, and
+          earn your certificate.
+        </p>
       </header>
 
       {/* Layout */}
@@ -375,11 +410,15 @@ a.click();
                 height="100%"
                 src={`https://www.youtube.com/embed/${currentVideoId}?autoplay=1&rel=0&modestbranding=1`}
                 title={selectedVideo.title}
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 allowFullScreen
               />
             ) : (
-              <div className="grid h-full place-items-center text-slate-400">Select a video to play</div>
+              <div className="grid h-full place-items-center text-slate-400">
+                Select a video to play
+              </div>
             )}
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/30 via-transparent to-transparent" />
           </div>
@@ -391,16 +430,27 @@ a.click();
                   {selectedVideo?.title || "No video selected"}
                 </h2>
                 <p className="text-sm text-slate-600 mt-0.5">
-                  Course: {selectedPackage?.name || "-"} • Sub-course: {selectedSubCourse?.title || "-"}
+                  Course: {selectedPackage?.name || "-"} • Sub-course:{" "}
+                  {selectedSubCourse?.title || "-"}
                 </p>
               </div>
               {selectedSubCourse && selectedVideo && (
                 <button
-                  onClick={() => toggleVideoCompleted(selectedSubCourse.id, selectedVideo.id)}
+                  onClick={() =>
+                    toggleVideoCompleted(selectedSubCourse.id, selectedVideo.id)
+                  }
                   className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-800 hover:bg-slate-200"
                 >
-                  <CheckIcon className={`h-5 w-5 ${progress[selectedSubCourse.id]?.[selectedVideo.id] ? "text-emerald-600" : "text-slate-400"}`} />
-                  {progress[selectedSubCourse.id]?.[selectedVideo.id] ? "Completed" : "Mark Completed"}
+                  <CheckIcon
+                    className={`h-5 w-5 ${
+                      progress[selectedSubCourse.id]?.[selectedVideo.id]
+                        ? "text-emerald-600"
+                        : "text-slate-400"
+                    }`}
+                  />
+                  {progress[selectedSubCourse.id]?.[selectedVideo.id]
+                    ? "Completed"
+                    : "Mark Completed"}
                 </button>
               )}
             </div>
@@ -415,7 +465,8 @@ a.click();
                   <div>
                     <h3 className="text-lg font-bold text-slate-900">Congratulations!</h3>
                     <p className="text-sm text-slate-600">
-                      You’ve completed “{selectedPackage.name}”. Generate and download your certificate.
+                      You’ve completed “{selectedPackage.name}”. Generate and download your
+                      certificate.
                     </p>
                   </div>
                 </div>
@@ -440,10 +491,12 @@ a.click();
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-slate-700">Your Courses</h3>
               {selectedPackage && (
-                <span className="text-xs font-semibold text-slate-500">{packageCompletion.pct}%</span>
+                <span className="text-xs font-semibold text-slate-500">
+                  {packageCompletion.pct}%
+                </span>
               )}
             </div>
-            <div className="mt-3 grid grid-cols-1 gap-2">
+            <div className="mt-3 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
               {accessiblePackageIds.map((pid) => {
                 const pkg = packagesMap[pid];
                 if (!pkg) return null;
@@ -454,7 +507,8 @@ a.click();
                 subIds.forEach((cid) => {
                   const vids = Object.keys(coursesMap[cid]?.videos || {});
                   total += vids.length;
-                  done += Object.keys(progress[cid] || {}).filter((k) => progress[cid]?.[k]).length;
+                  done += Object.keys(progress[cid] || {}).filter((k) => progress[cid]?.[k])
+                    .length;
                 });
                 const pct = total > 0 ? Math.round((Math.min(done, total) / total) * 100) : 0;
                 const active = selectedPackageId === pid;
@@ -463,21 +517,36 @@ a.click();
                   <button
                     key={pid}
                     onClick={() => setSelectedPackageId(pid)}
-                    className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`}
+                    className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${
+                      active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"
+                    }`}
                   >
                     <div className="flex items-center gap-3">
                       <div className="relative h-8 w-8 overflow-hidden rounded">
                         {pkg.imageUrl ? (
-                          <Image src={pkg.imageUrl} alt={pkg.name} fill className="object-cover" />
+                          <Image
+                            src={pkg.imageUrl}
+                            alt={pkg.name}
+                            fill
+                            className="object-cover"
+                          />
                         ) : (
                           <div className="h-full w-full bg-slate-200" />
                         )}
                       </div>
                       <div className="flex-1">
-                        <div className={`text-sm font-semibold ${active ? "text-indigo-800" : "text-slate-800"}`}>{pkg.name}</div>
+                        <div
+                          className={`text-sm font-semibold ${
+                            active ? "text-indigo-800" : "text-slate-800"
+                          }`}
+                        >
+                          {pkg.name}
+                        </div>
                         <div className="mt-1 h-2 w-full rounded-full bg-slate-200">
                           <div
-                            className={`h-2 rounded-full ${pct >= 100 ? "bg-emerald-500" : "bg-indigo-500/80"}`}
+                            className={`h-2 rounded-full ${
+                              pct >= 100 ? "bg-emerald-500" : "bg-indigo-500/80"
+                            }`}
                             style={{ width: `${pct}%` }}
                           />
                         </div>
@@ -490,72 +559,104 @@ a.click();
             </div>
           </div>
 
-          {/* Sub-courses for selected package */}
+          {/* Sub-courses for selected package (now scrollable) */}
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
             <h3 className="text-sm font-semibold text-slate-700">Sub-courses</h3>
-            <div className="mt-3 grid grid-cols-1 gap-2">
-              {selectedPackage
-                ? Object.keys(selectedPackage.courseIds || {}).map((cid) => {
-                    const sc = coursesMap[cid];
-                    if (!sc) return null;
-                    const vids = Object.keys(sc.videos || {});
-                    const done = Object.keys(progress[cid] || {}).filter((k) => progress[cid]?.[k]).length;
-                    const pct = vids.length > 0 ? Math.round((Math.min(done, vids.length) / vids.length) * 100) : 0;
-                    const active = selectedSubCourseId === cid;
-                    return (
-                      <button
-                        key={cid}
-                        onClick={() => setSelectedSubCourseId(cid)}
-                        className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"}`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className={`text-sm font-semibold ${active ? "text-indigo-800" : "text-slate-800"}`}>{sc.title}</span>
-                          <span className="text-xs font-semibold text-slate-500">{pct}%</span>
-                        </div>
-                        <div className="mt-2 h-2 w-full rounded-full bg-slate-200">
-                          <div
-                            className={`h-2 rounded-full ${pct >= 100 ? "bg-emerald-500" : "bg-indigo-500/80"}`}
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </button>
-                    );
-                  })
-                : (
-                  <div className="rounded-md bg-slate-50 p-4 text-center text-sm text-slate-500">No sub-courses.</div>
-                )}
+            <div className="mt-3 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
+              {selectedPackage ? (
+                Object.keys(selectedPackage.courseIds || {}).map((cid) => {
+                  const sc = coursesMap[cid];
+                  if (!sc) return null;
+                  const vids = Object.keys(sc.videos || {});
+                  const done = Object.keys(progress[cid] || {}).filter(
+                    (k) => progress[cid]?.[k]
+                  ).length;
+                  const pct =
+                    vids.length > 0
+                      ? Math.round((Math.min(done, vids.length) / vids.length) * 100)
+                      : 0;
+                  const active = selectedSubCourseId === cid;
+                  return (
+                    <button
+                      key={cid}
+                      onClick={() => setSelectedSubCourseId(cid)}
+                      className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${
+                        active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span
+                          className={`text-sm font-semibold ${
+                            active ? "text-indigo-800" : "text-slate-800"
+                          }`}
+                        >
+                          {sc.title}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-500">{pct}%</span>
+                      </div>
+                      <div className="mt-2 h-2 w-full rounded-full bg-slate-200">
+                        <div
+                          className={`h-2 rounded-full ${
+                            pct >= 100 ? "bg-emerald-500" : "bg-indigo-500/80"
+                          }`}
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </button>
+                  );
+                })
+              ) : (
+                <div className="rounded-md bg-slate-50 p-4 text-center text-sm text-slate-500">
+                  No sub-courses.
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Videos in selected sub-course */}
+          {/* Videos in selected sub-course (now scrollable + mobile-friendly) */}
           <div className="rounded-2xl border bg-white p-3 shadow-sm">
-            <h3 className="px-1 text-sm font-semibold text-slate-700">{selectedSubCourse?.title || "Videos"}</h3>
-            <div className="mt-2 space-y-1.5">
+            <h3 className="px-1 text-sm font-semibold text-slate-700">
+              {selectedSubCourse?.title || "Videos"}
+            </h3>
+            <div className="mt-2 space-y-1.5 max-h-80 overflow-y-auto pr-1">
               {selectedSubCourseVideoList.length > 0 ? (
                 selectedSubCourseVideoList.map((v) => {
                   const done = !!progress[selectedSubCourse!.id]?.[v.id];
                   const active = selectedVideo?.id === v.id;
                   return (
-                    <div key={v.id} className="flex items-center gap-2 rounded-lg p-2 hover:bg-slate-50">
+                    <div
+                      key={v.id}
+                      className="flex items-center gap-2 rounded-lg p-2 hover:bg-slate-50"
+                    >
                       <button
-                        onClick={() => setSelectedVideo({ id: v.id, title: v.title, url: v.url })}
-                        className={`flex-1 text-left text-[13px] ${active ? "text-indigo-700 font-semibold" : "text-slate-700"}`}
+                        onClick={() =>
+                          setSelectedVideo({ id: v.id, title: v.title, url: v.url })
+                        }
+                        className={`flex-1 text-left text-[13px] ${
+                          active ? "text-indigo-700 font-semibold" : "text-slate-700"
+                        }`}
                         title={v.title}
                       >
                         {v.title}
                       </button>
                       <button
                         onClick={() => toggleVideoCompleted(selectedSubCourse!.id, v.id)}
-                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 ring-slate-200 ${done ? "bg-emerald-100" : "bg-white"}`}
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 ring-slate-200 ${
+                          done ? "bg-emerald-100" : "bg-white"
+                        }`}
                         title={done ? "Completed" : "Mark as completed"}
                       >
-                        <CheckIcon className={`h-4 w-4 ${done ? "text-emerald-600" : "text-slate-400"}`} />
+                        <CheckIcon
+                          className={`h-4 w-4 ${done ? "text-emerald-600" : "text-slate-400"}`}
+                        />
                       </button>
                     </div>
                   );
                 })
               ) : (
-                <div className="rounded-md bg-slate-50 p-4 text-center text-sm text-slate-500">No videos available.</div>
+                <div className="rounded-md bg-slate-50 p-4 text-center text-sm text-slate-500">
+                  No videos available.
+                </div>
               )}
             </div>
           </div>
@@ -572,86 +673,106 @@ a.click();
           </div>
         </aside>
       </div>
-      
-      {/* ====== Certificate Modal (Modern Design) ====== */}
+
+      {/* ====== Certificate Modal (Redesigned) ====== */}
       {showCertModal && selectedPackage && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-          <div className="relative w-full max-w-4xl rounded-2xl bg-white shadow-xl">
+          <div className="relative w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-xl">
             <div className="flex items-center justify-between border-b px-4 py-3">
               <h3 className="text-lg font-semibold">Certificate of Completion</h3>
-              <button onClick={() => setShowCertModal(false)} className="rounded-full p-1 hover:bg-slate-100">
+              <button
+                onClick={() => setShowCertModal(false)}
+                className="rounded-full p-1 hover:bg-slate-100"
+              >
                 <CloseIcon className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="max-h-[70vh] overflow-auto p-6 bg-slate-200/70">
+            <div className="max-h-[70vh] overflow-auto bg-slate-100/60 p-6">
               <div
                 ref={certRef}
-                className="relative mx-auto aspect-[11/8.5] w-full max-w-3xl overflow-hidden rounded-lg border bg-white shadow-lg"
-                style={{
-                  backgroundImage: `url('data:image/svg+xml;utf8,<svg width="100" height="100" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><g fill="%23e2e8f0" fill-opacity="0.4"><rect x="50" width="50" height="50" /><rect y="50" width="50" height="50" /></g></svg>')`,
-                }}
+                className="relative mx-auto aspect-[11/8.5] w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-slate-200"
               >
-                <div className="absolute left-0 top-0 h-full w-1/3 bg-indigo-900/90" />
-                <div
-                  className="absolute -left-20 -top-20 h-48 w-48 rounded-full border-[20px] border-amber-400/80"
-                />
-
-                <div className="relative flex h-full flex-col p-10 text-slate-800">
-                  <div className="flex items-start justify-between">
-                    <div className="w-2/3">
-                      <h1 className="text-[2.75rem] font-bold leading-none tracking-tight text-white [text-wrap:balance]">
-                        Certificate of Completion
-                      </h1>
-                      <p className="mt-4 text-sm font-medium text-indigo-200">
-                        This certificate is proudly presented to
-                      </p>
-                    </div>
+                {/* Header strip with logo + brand + title */}
+                <div className="relative flex items-center justify-between bg-gradient-to-r from-indigo-700 via-violet-600 to-fuchsia-600 px-6 py-4 text-white">
+                  <div className="flex items-center gap-3">
                     <img
                       src="/images/courseplexlogo.png"
-                      alt="Course Plex Logo"
+                      alt="Plex Courses Logo"
                       crossOrigin="anonymous"
-                      className="h-16 w-16 object-contain"
+                      className="h-10 w-10 object-contain"
                     />
-                  </div>
-
-                  <div className="mt-6 flex-1">
-                    <p
-                      className="font-serif text-5xl font-medium text-indigo-900"
-                      style={{ fontFamily: "'Georgia', serif" }}
-                    >
-                      {userName}
-                    </p>
-                    <p className="mt-4 max-w-md text-sm text-slate-600">
-                      For successfully completing the comprehensive online course:
-                    </p>
-                    <p className="mt-2 text-xl font-semibold text-indigo-900 [text-wrap:balance]">
-                      {selectedPackage.name}
-                    </p>
-                  </div>
-                  
-                  <div className="mt-auto flex items-end justify-between">
-                    <div className="text-xs">
-                      <p className="font-semibold text-slate-800">Date Issued</p>
-                      <p className="mt-1 border-t border-slate-300 pt-1 text-slate-600">{issueDate}</p>
+                    <div className="leading-tight">
+                      <div className="text-sm opacity-90">Presented by</div>
+                      <div className="text-xl font-extrabold tracking-tight">Plex Courses</div>
                     </div>
-                    
-                    <div className="relative h-24 w-24">
-                      <AwardIcon className="h-full w-full text-amber-400 opacity-80" />
-                      <div className="absolute inset-0 flex items-center justify-center text-center text-[10px] font-bold uppercase tracking-wider text-indigo-900">
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs uppercase tracking-widest opacity-90">
+                      Official Document
+                    </div>
+                    <div className="text-lg font-bold">Certificate of Completion</div>
+                  </div>
+                </div>
+
+                {/* Body */}
+                <div className="relative p-8 md:p-10">
+                  {/* subtle frame */}
+                  <div className="absolute inset-4 -z-10 rounded-xl border border-slate-200" />
+
+                  <p className="text-sm font-medium text-slate-500">This certifies that</p>
+
+                  {/* Participant name with gradient like brand */}
+                  <h1 className="mt-2 bg-gradient-to-r from-indigo-700 via-violet-700 to-fuchsia-700 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent md:text-5xl">
+                    {userName}
+                  </h1>
+
+                  <p className="mt-4 text-sm text-slate-600">
+                    has successfully completed the comprehensive online course
+                  </p>
+
+                  <p className="mt-2 text-2xl font-semibold text-slate-900 md:text-3xl">
+                    {selectedPackage.name}
+                  </p>
+
+                  {/* Bottom row: date + seal + signature */}
+                  <div className="mt-10 grid grid-cols-3 items-end gap-4">
+                    {/* Date */}
+                    <div className="text-xs">
+                      <div className="font-semibold text-slate-800">Date Issued</div>
+                      <div className="mt-1 border-t border-slate-300 pt-1 text-slate-600">
+                        {issueDate}
+                      </div>
+                    </div>
+
+                    {/* Seal */}
+                    <div className="relative mx-auto h-24 w-24">
+                      <AwardIcon className="h-full w-full text-amber-400 opacity-90" />
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-center text-[10px] font-bold uppercase tracking-wider text-indigo-900">
                         Official Seal
                       </div>
                     </div>
-                    
-                    <div className="text-center text-xs">
-                      <p className="font-serif text-lg italic text-slate-700" style={{ fontFamily: "'Brush Script MT', cursive" }}>J. Doe</p>
-                      <p className="mt-1 border-t border-slate-300 pt-1 font-semibold text-slate-800">John Doe, Head Instructor</p>
+
+                    {/* Signature */}
+                    <div className="text-right text-xs">
+                      <div
+                        className="font-serif text-lg italic text-slate-700"
+                        style={{ fontFamily: "'Brush Script MT', cursive" }}
+                      >
+                        Plex Courses
+                      </div>
+                      <div className="mt-1 border-t border-slate-300 pt-1 font-semibold text-slate-800">
+                        Authorized Signatory
+                      </div>
                     </div>
                   </div>
 
-                  <p className="absolute bottom-2 right-4 text-[9px] font-mono text-slate-400">
-                    ID: {userId?.slice(0, 8)}-{selectedPackage.id.slice(0, 8)}
-                  </p>
+                  {/* Footer ID */}
+                  <div className="mt-6 text-right">
+                    <p className="text-[10px] font-mono text-slate-400">
+                      ID: {userId?.slice(0, 8)}-{selectedPackage.id.slice(0, 8)}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>

@@ -15,15 +15,15 @@ const roboto = Roboto({
 export const metadata: Metadata = {
   // --- Core Metadata ---
   title: {
-    template: "%s | Course Plex", // Appends site name to sub-page titles
-    default: "Course Plex - #1 Digital Marketing & Affiliate Courses in Nepal", // Default title for homepage
+    template: "%s | Plex Courses", // Appends site name to sub-page titles
+    default: "Plex Courses - #1 Digital Marketing & Affiliate Courses in Nepal", // Default title for homepage
   },
-  description: "Join Course Plex for Nepal's top-rated digital marketing, affiliate marketing, and SEO courses. Learn practical skills, get career guidance, and start earning online. Enroll now!",
+  description: "Join Plex Courses for Nepal's top-rated digital marketing, affiliate marketing, and SEO courses. Learn practical skills, get career guidance, and start earning online. Enroll now!",
   
   // --- Keywords (Extensive List) ---
   keywords: [
     // Primary Keywords
-    "digital marketing course in nepal", "online courses nepal", "Course Plex", "affiliate marketing nepal", "seo training nepal",
+    "digital marketing course in nepal", "online courses nepal", "Plex Courses", "affiliate marketing nepal", "seo training nepal",
     "learn digital marketing nepal", "social media marketing course nepal", "online earning in nepal",
     
     // Course-Specific Keywords
@@ -61,9 +61,9 @@ export const metadata: Metadata = {
   ],
   
   // --- Author & Branding ---
-  authors: [{ name: "Course Plex", url: "https://sajilointerior.com.np" }],
+  authors: [{ name: "Plex Courses", url: "https://sajilointerior.com.np" }],
   creator: "App Plex",
-  publisher: "Course Plex",
+  publisher: "Plex Courses",
 
   // --- Technical SEO ---
   metadataBase: new URL("https://sajilointerior.com.np"),
@@ -73,16 +73,16 @@ export const metadata: Metadata = {
 
   // --- Social Media & Sharing (Open Graph for Facebook, LinkedIn, etc.) ---
   openGraph: {
-    title: "Course Plex - #1 Digital Marketing & Affiliate Courses",
+    title: "Plex Courses - #1 Digital Marketing & Affiliate Courses",
     description: "Learn practical skills in SEO, social media, and affiliate marketing to build your career and start earning online.",
     url: "https://sajilointerior.com.np",
-    siteName: "Course Plex",
+    siteName: "Plex Courses",
     images: [
       {
         url: "/sajilointerior-og-image.png", // Place this image in your `public` folder
         width: 1200,
         height: 630,
-        alt: "Course Plex - Learn and Earn",
+        alt: "Plex Courses - Learn and Earn",
       },
     ],
     locale: "en_US",
@@ -92,7 +92,7 @@ export const metadata: Metadata = {
   // --- Twitter-Specific Card ---
   twitter: {
     card: "summary_large_image",
-    title: "Course Plex - #1 Digital Marketing & Affiliate Courses",
+    title: "Plex Courses - #1 Digital Marketing & Affiliate Courses",
     description: "Learn practical skills in SEO, social media, and affiliate marketing to build your career and start earning online.",
     images: ["/sajilointerior-og-image.png"], // Must be an absolute URL in production
   },
@@ -109,7 +109,7 @@ export const metadata: Metadata = {
 const jsonLd = {
   "@context": "https://schema.org",
   "@type": "Organization",
-  "name": "Course Plex",
+  "name": "Plex Courses",
   "url": "https://sajilointerior.com.np",
   "logo": "https://sajilointerior.com.np/images/courseplexlogo.png", // MUST be an absolute URL
   "contactPoint": {

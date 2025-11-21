@@ -26,7 +26,7 @@ export default function ChatWidgetLocal() {
     {
       role: "assistant",
       content:
-        "Hi! I’m your Course Plex assistant. Ask me anything about your courses, schedule, or the platform.",
+        "Hi! I’m your Plex Courses assistant. Ask me anything about your courses, schedule, or the platform.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -168,9 +168,9 @@ export default function ChatWidgetLocal() {
       const systemPrompt: LLMMessage = {
         role: "system",
         content:
-          "You are the Course Plex student assistant. Be concise, friendly, and helpful. " +
+          "You are the Plex Courses student assistant. Be concise, friendly, and helpful. " +
           "Answer questions about courses, modules, schedules, fees, platform usage, and account issues. " +
-          "If you don't know, ask clarifying questions or suggest contacting support@courseplex.com.",
+          "If you don't know, ask clarifying questions or suggest contacting support@PlexCourses.com.",
       };
 
       const llmMessages: LLMMessage[] = [
@@ -225,7 +225,7 @@ export default function ChatWidgetLocal() {
         onClick={() => setOpen((v) => !v)}
         className="fixed bottom-5 right-5 z-50 rounded-full bg-sky-600 text-white shadow-lg hover:bg-sky-700 transition p-3"
         aria-label={open ? "Close chat" : "Open chat"}
-        title="Course Plex Assistant"
+        title="Plex Courses Assistant"
       >
         <RobotIcon className="h-6 w-6" />
       </button>
@@ -238,7 +238,7 @@ export default function ChatWidgetLocal() {
               <RobotIcon className="h-5 w-5" />
             </div>
             <div className="flex-1">
-              <div className="font-semibold text-slate-900">Course Plex Assistant</div>
+              <div className="font-semibold text-slate-900">Plex Courses Assistant</div>
               <div className="text-xs text-slate-500">Here to help with courses, schedules, and more</div>
             </div>
             <button

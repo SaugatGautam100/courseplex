@@ -28,7 +28,7 @@ export default function ServicesPage() {
   const [hero, setHero] = useState<HeroSection>({
     phone: "9779705726179",
     whatsappMessage:
-      "Hi! I’m interested in your course packages. Can you help me choose the best one?",
+      "Hi! I'm interested in your courses. Can you help me choose the best one?",
   });
 
   useEffect(() => {
@@ -84,28 +84,13 @@ export default function ServicesPage() {
         <div className="mx-auto max-w-7xl px-4 py-14 md:py-20">
           <header className="mx-auto max-w-3xl text-center">
             <h2 className="text-3xl font-extrabold tracking-tight">
-              A Learning Experience Designed for Your Success
+              A learning experience designed for real outcomes
             </h2>
             <p className="mt-2 text-lg text-slate-600">
-              We provide more than just videos. Our courses are structured to give you the skills and confidence to excel.
+              Learn through projects, get mentor support, and earn a certificate on completion.
             </p>
           </header>
           <Features />
-        </div>
-      </section>
-
-      {/* Examples Section */}
-      <section id="examples" className="bg-white scroll-mt-24">
-        <div className="mx-auto max-w-7xl px-4 py-14 md:py-20">
-          <header className="mx-auto max-w-3xl text-center">
-            <h2 className="text-3xl font-extrabold tracking-tight">
-              Explore Our Core Digital Marketing Courses
-            </h2>
-            <p className="mt-2 text-lg text-slate-600">
-              From foundational principles to advanced strategies, our curriculum covers every critical area of digital marketing.
-            </p>
-          </header>
-          <Examples />
         </div>
       </section>
 
@@ -121,7 +106,7 @@ export default function ServicesPage() {
         phone={normalizedWaPhone}
         message={
           hero.whatsappMessage ||
-          "Hi! I’m interested in your course packages. Can you help me choose the best one?"
+          "Hi! I'm interested in your courses. Can you help me choose the best one?"
         }
       />
     </main>
@@ -145,18 +130,17 @@ function Hero({
       </div>
       <div className="relative z-10 mx-auto grid max-w-4xl place-items-center px-6 py-16 text-center md:px-10 md:py-24">
         <h1 className="text-4xl font-black leading-tight tracking-tight md:text-6xl">
-          Master In-Demand Digital Skills for a Brighter Future
+          Master in-demand skills for a brighter future
         </h1>
         <p className="mt-4 max-w-2xl text-base text-slate-600 md:text-lg">
-          At Course Plex, we provide practical, career-focused training in digital marketing. Our courses are designed to
-          give you the real-world skills needed to thrive in today&apos;s competitive job market.
+          At Plex Courses, learn through structured tracks across Tech, Business, Design, Marketing, and more — with hands-on projects, mentor support, and a certificate on completion.
         </p>
         <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row">
           <Link
-            href="/packages"
+            href="/courses"
             className="inline-flex items-center rounded-full bg-sky-600 px-6 py-3 text-base font-semibold text-white shadow-sm ring-1 ring-sky-700/20 transition hover:bg-sky-700"
           >
-            Explore All Courses
+            Browse All Courses
           </Link>
         </div>
         <dl className="mt-8 grid w-full grid-cols-3 gap-4 text-center text-sm text-slate-600 sm:text-base">
@@ -166,7 +150,7 @@ function Hero({
           </div>
           <div>
             <dt className="font-semibold text-slate-900">{careerFocusedCourses}+</dt>
-            <dd>Career-Focused Courses</dd>
+            <dd>Career-Focused Tracks</dd>
           </div>
           <div>
             <dt className="font-semibold text-slate-900">{successRate}%</dt>
@@ -192,12 +176,13 @@ function HeroArt() {
 /* ====================== Features ====================== */
 function Features() {
   const items = [
-    { title: "Expert-Led Curriculum", desc: "Learn from industry professionals who bring real-world experience to every lesson." },
-    { title: "Hands-On Projects", desc: "Build a portfolio with practical projects that solve real business challenges." },
-    { title: "Career Guidance", desc: "Receive personalized support, from resume building to interview preparation." },
-    { title: "Flexible Learning", desc: "Study at your own pace with 24/7 access to all course materials and our community." },
+    { title: "Expert-led curriculum", desc: "Learn from professionals who bring real-world experience to every lesson." },
+    { title: "Project-first learning", desc: "Build portfolio-ready projects that map to actual roles and outcomes." },
+    { title: "Mentor support", desc: "Stay unblocked with guidance, feedback, and accountability from mentors." },
+    { title: "Certificate on completion", desc: "Validate your skills with a shareable certificate when you finish a track." },
   ];
-  const icons = [BuilderIcon, ContentIcon, CommunityIcon, AnalyticsIcon];
+  const icons = [BuilderIcon, ContentIcon, CommunityIcon, CertificateIcon];
+
   return (
     <div className="mx-auto mt-12 grid max-w-6xl gap-6 sm:grid-cols-2 lg:grid-cols-4">
       {items.map((f, i) => {
@@ -216,49 +201,6 @@ function Features() {
   );
 }
 
-/* ====================== Examples ====================== */
-function Examples() {
-  const items: { title: string; desc: string; variant: "seo" | "social" | "ppc" }[] = [
-    {
-      title: "SEO & Content Mastery",
-      desc: "Learn to rank websites on Google and create content that attracts and converts customers.",
-      variant: "seo",
-    },
-    {
-      title: "Social Media Marketing Pro",
-      desc: "Master platforms like Instagram and Facebook to build communities and drive engagement.",
-      variant: "social",
-    },
-    {
-      title: "Digital Advertising & PPC",
-      desc: "Launch and manage profitable ad campaigns on Google Ads and social media platforms.",
-      variant: "ppc",
-    },
-  ];
-  return (
-    <div className="mx-auto mt-12 grid max-w-6xl gap-8 lg:grid-cols-3">
-      {items.map((c) => (
-        <article key={c.title} className="group overflow-hidden rounded-2xl border bg-white shadow-sm transition hover:shadow-md">
-          <div className="relative h-48 w-full bg-slate-100">
-            {c.variant === "seo" && <ThumbSEO />}
-            {c.variant === "social" && <ThumbSocial />}
-            {c.variant === "ppc" && <ThumbPPC />}
-          </div>
-          <div className="p-6">
-            <h3 className="text-lg font-semibold">{c.title}</h3>
-            <p className="mt-1 text-base text-slate-600">{c.desc}</p>
-            <div className="mt-4">
-              <Link href="/packages" className="inline-flex items-center text-sm font-medium text-sky-700 hover:underline">
-                View syllabus →
-              </Link>
-            </div>
-          </div>
-        </article>
-      ))}
-    </div>
-  );
-}
-
 /* ====================== CTA ====================== */
 function BottomCTA() {
   return (
@@ -267,65 +209,21 @@ function BottomCTA() {
         <div>
           <h3 className="text-2xl font-semibold text-white">Ready to build your future?</h3>
           <p className="mt-1 text-base text-sky-100">
-            Enroll today and take the first step towards a successful career in digital marketing.
+            Enroll today, learn by doing, and earn a certificate when you complete a track.
           </p>
         </div>
         <Link
-          href="/packages"
+          href="/courses"
           className="inline-flex shrink-0 items-center rounded-full bg-white px-5 py-3 text-base font-semibold text-sky-700 shadow-lg ring-1 ring-white/60 transition hover:bg-sky-50"
         >
-          Explore All Packages
+          Browse All Courses
         </Link>
       </div>
     </div>
   );
 }
 
-/* ====================== Thumbs & Icons ====================== */
-function ThumbSEO() {
-  return (
-    <svg viewBox="0 0 600 220" className="absolute inset-0 h-full w-full" fill="none" aria-hidden>
-      <rect x="20" y="20" width="560" height="180" rx="14" fill="#0EA5E9" opacity=".12" />
-      <rect x="60" y="60" width="480" height="24" rx="8" fill="#0284C7" opacity=".35" />
-      <path d="M80 69h16" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
-      <rect x="60" y="110" width="220" height="16" rx="6" fill="#0284C7" opacity=".25" />
-      <rect x="60" y="140" width="160" height="16" rx="6" fill="#0284C7" opacity=".25" />
-      <rect x="320" y="110" width="220" height="16" rx="6" fill="#0284C7" opacity=".25" />
-      <rect x="320" y="140" width="160" height="16" rx="6" fill="#0284C7" opacity=".25" />
-    </svg>
-  );
-}
-function ThumbSocial() {
-  return (
-    <svg viewBox="0 0 600 220" className="absolute inset-0 h-full w-full" fill="none" aria-hidden>
-      <rect x="20" y="20" width="560" height="180" rx="14" fill="#8B5CF6" opacity=".12" />
-      <rect x="80" y="70" width="100" height="80" rx="10" fill="#7C3AED" opacity=".4" />
-      <path d="M120 120l-10 10-10-10" stroke="#fff" strokeWidth="2" />
-      <rect x="200" y="50" width="120" height="120" rx="10" fill="#A78BFA" opacity=".5" />
-      <path
-        d="M260 80h-40M260 95h-40M260 110h-20M260 140a10 10 0 10-20 0 10 10 0 0020 0z"
-        stroke="#fff"
-        strokeWidth="2"
-        strokeLinecap="round"
-      />
-      <rect x="340" y="90" width="180" height="40" rx="20" fill="#C4B5FD" opacity=".6" />
-    </svg>
-  );
-}
-function ThumbPPC() {
-  return (
-    <svg viewBox="0 0 600 220" className="absolute inset-0 h-full w-full" fill="none" aria-hidden>
-      <rect x="20" y="20" width="560" height="180" rx="14" fill="#22C55E" opacity=".12" />
-      <rect x="60" y="150" width="60" height="20" rx="6" fill="#10B981" opacity=".6" />
-      <rect x="140" y="140" width="60" height="30" rx="6" fill="#10B981" opacity=".6" />
-      <rect x="220" y="120" width="60" height="50" rx="6" fill="#10B981" opacity=".6" />
-      <rect x="300" y="100" width="60" height="70" rx="6" fill="#10B981" opacity=".6" />
-      <rect x="380" y="80" width="60" height="90" rx="6" fill="#10B981" opacity=".6" />
-      <path d="M60 140C152 40 330 20 450 120" stroke="#059669" strokeWidth="3" strokeDasharray="4 4" />
-    </svg>
-  );
-}
-
+/* ====================== Icons ====================== */
 function BuilderIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
@@ -355,13 +253,10 @@ function CommunityIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-function AnalyticsIcon(props: SVGProps<SVGSVGElement>) {
+function CertificateIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
-      <rect x="4" y="10" width="3" height="8" rx="1.5" />
-      <rect x="10.5" y="6" width="3" height="12" rx="1.5" opacity=".6" />
-      <rect x="17" y="3" width="3" height="15" rx="1.5" opacity=".35" />
-      <path d="M5 9l6-4 6 3 2-3" stroke="currentColor" strokeWidth="2" fill="none" />
+      <path d="M12 2a5 5 0 110 10 5 5 0 010-10zm-7 14l7-2 7 2v4l-7-2-7 2v-4z" />
     </svg>
   );
 }

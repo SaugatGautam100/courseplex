@@ -71,7 +71,7 @@ env:
   - variable: MAIL_TRANSPORT
     value: sendmail
   - variable: MAIL_FROM
-    value: "Course Plex <no-reply@courseplex.com.np>"
+    value: "Plex Courses <no-reply@PlexCourses.com.np>"
   - variable: SENDMAIL_PATH
     value: /usr/sbin/sendmail
 

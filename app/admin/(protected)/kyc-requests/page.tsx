@@ -124,7 +124,7 @@ export default function KycRequestsPage() {
         newStatus === "Approved" ? "<p>Congratulations! Your account is now fully verified.</p>" : ""
       }${
         newStatus === "Rejected" ? "<p>Please review your details and re-submit if necessary.</p>" : ""
-      }<p>Thank you,<br/>The Course Plex Team</p>`;
+      }<p>Thank you,<br/>The Plex Courses Team</p>`;
 
       await fetch("/api/send-email", {
         method: "POST",

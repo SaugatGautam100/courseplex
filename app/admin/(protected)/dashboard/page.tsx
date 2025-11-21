@@ -28,13 +28,41 @@ type ServicesStats = { expertInstructors: number; careerFocusedCourses: number; 
 type UserDB = { totalEarnings?: number; balance?: number; status?: string; };
 type UsersMapDB = Record<string, UserDB>;
 
+// DB rows
 type CommissionDBRec = { referrerId?: string; amount?: number | string; timestamp?: number | string; };
-type OrderDbRec = { courseId?: string; status?: "Pending Approval" | "Completed" | "Rejected"; };
+type OrderDbRec = {
+  courseId?: string;
+  status?: "Pending Approval" | "Completed" | "Rejected";
+  createdAt?: string; // add createdAt for breakdown
+};
 type PackageDbRec = { price?: number | string };
-type WithdrawalDB = { amount?: number | string; status?: "Pending" | "Completed" | "Rejected" };
+type WithdrawalDB = {
+  amount?: number | string;
+  status?: "Pending" | "Completed" | "Rejected";
+  // requestedAt?: string;
+};
 
 // Helpers
 const formatCurrency = (n: number) => `Rs ${Math.round(n).toLocaleString()}`;
+const toNumber = (v: unknown) => (typeof v === "number" ? v : Number(v || 0));
+
+const startOfTodayTs = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+const startOfWeekTs = () => {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+const startOfMonthTs = () => {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), 1);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
 
 export default function AdminDashboard() {
   const [analytics, setAnalytics] = useState<Analytics>({
@@ -67,7 +95,7 @@ export default function AdminDashboard() {
   const [activeReferrerIds, setActiveReferrerIds] = useState<string[]>([]);
   const [ordersMap, setOrdersMap] = useState<Record<string, OrderDbRec>>({});
   const [packagesMap, setPackagesMap] = useState<Record<string, PackageDbRec>>({});
-  const [withdrawalsMap, setWithdrawalsMap] = useState<Record<string, WithdrawalDB>>({});
+  const [withdrawalsMap, setWithdrawalsMap] = useState<Record<string, WithdrawalDB | any>>({}); // may include _deleted node
 
   // Subscriptions
   useEffect(() => {
@@ -156,7 +184,7 @@ export default function AdminDashboard() {
     );
 
     const unsubWithdrawals = onValue(withdrawalsRef, (snap) => {
-      setWithdrawalsMap((snap.val() as Record<string, WithdrawalDB>) || {});
+      setWithdrawalsMap((snap.val() as Record<string, WithdrawalDB | any>) || {});
     });
 
     return () => {
@@ -179,21 +207,45 @@ export default function AdminDashboard() {
     setAnalytics((prev) => ({ ...prev, activeUsers: count }));
   }, [activeReferrerIds, allUsersMap]);
 
-  // Compute platform income and balance (income - processed withdrawals)
-  const platformIncome = useMemo(() => {
-    let income = 0;
-    for (const o of Object.values(ordersMap)) {
+  // Earnings breakdown (Today, This Week, This Month, Lifetime) from Completed Orders
+  const earningsBreakdown = useMemo(() => {
+    const todayStart = startOfTodayTs();
+    const weekStart = startOfWeekTs();
+    const monthStart = startOfMonthTs();
+
+    let today = 0;
+    let weekly = 0;
+    let monthly = 0;
+    let lifetime = 0;
+
+    for (const o of Object.values(ordersMap || {})) {
       if (o?.status !== "Completed" || !o.courseId) continue;
-      const price = packagesMap[o.courseId]?.price;
-      const n = typeof price === "number" ? price : Number(price || 0);
-      if (isFinite(n) && n > 0) income += n;
+
+      // Course price
+      const p = packagesMap[o.courseId]?.price;
+      const price = typeof p === "number" ? p : Number(p || 0);
+      if (!isFinite(price) || price <= 0) continue;
+
+      // Time
+      const ts = o.createdAt ? Date.parse(o.createdAt) : NaN;
+      lifetime += price;
+
+      if (!isNaN(ts)) {
+        if (ts >= monthStart) monthly += price;
+        if (ts >= weekStart) weekly += price;
+        if (ts >= todayStart) today += price;
+      }
     }
-    return income;
+
+    return { today, weekly, monthly, lifetime };
   }, [ordersMap, packagesMap]);
 
+  // Processed withdrawals sum (Completed only). Ignore _deleted subtree
   const processedWithdrawals = useMemo(() => {
     let sum = 0;
-    for (const r of Object.values(withdrawalsMap)) {
+    for (const [key, v] of Object.entries(withdrawalsMap || {})) {
+      if (key === "_deleted") continue; // skip deleted registry
+      const r = v as WithdrawalDB;
       if (r?.status !== "Completed") continue;
       const amt = typeof r.amount === "number" ? r.amount : Number(r.amount || 0);
       if (isFinite(amt) && amt > 0) sum += amt;
@@ -201,13 +253,14 @@ export default function AdminDashboard() {
     return sum;
   }, [withdrawalsMap]);
 
+  // Update analytics (Total Earnings & Balance)
   useEffect(() => {
     setAnalytics((prev) => ({
       ...prev,
-      totalEarnings: platformIncome,
-      totalBalance: Math.max(0, platformIncome - processedWithdrawals),
+      totalEarnings: earningsBreakdown.lifetime,
+      totalBalance: Math.max(0, earningsBreakdown.lifetime - processedWithdrawals),
     }));
-  }, [platformIncome, processedWithdrawals]);
+  }, [earningsBreakdown.lifetime, processedWithdrawals]);
 
   // Save handlers
   const saveContact = async () => {
@@ -299,10 +352,19 @@ export default function AdminDashboard() {
     );
   }
 
+  const chartValues = [
+    { label: "Today", value: earningsBreakdown.today },
+    { label: "This Week", value: earningsBreakdown.weekly },
+    { label: "This Month", value: earningsBreakdown.monthly },
+    { label: "Lifetime", value: earningsBreakdown.lifetime },
+  ];
+  const maxVal = Math.max(1, ...chartValues.map((d) => d.value));
+  const barColor = ["bg-emerald-500", "bg-sky-500", "bg-indigo-500", "bg-fuchsia-500"];
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
-        <header className="mb-8">
+        <header className="mb-6">
           <h1 className="text-3xl font-bold tracking-tight text-slate-900">Admin Dashboard</h1>
           <p className="text-slate-600 mt-1">Monitor performance and manage site content</p>
         </header>
@@ -329,6 +391,45 @@ export default function AdminDashboard() {
           </StatCard>
         </div>
 
+        {/* Earnings Overview (Graph) */}
+        <section className="bg-white rounded-lg shadow p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-slate-900">Earnings Overview</h2>
+            <div className="text-xs text-slate-500">Sum of package prices from Completed orders</div>
+          </div>
+
+          {/* Summary row */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-6">
+            {chartValues.map((d, i) => (
+              <div key={d.label} className="rounded-md border border-slate-200 p-3">
+                <div className="text-xs text-slate-500">{d.label}</div>
+                <div className="text-lg font-bold text-slate-900">{formatCurrency(d.value)}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Simple responsive bar chart */}
+          <div className="mt-2">
+            <div className="flex items-end gap-4 h-40">
+              {chartValues.map((d, i) => {
+                const hPct = Math.round((d.value / maxVal) * 100);
+                return (
+                  <div key={d.label} className="flex-1 flex flex-col items-center">
+                    <div className="relative w-8 sm:w-10 lg:w-12 bg-slate-100 rounded-md overflow-hidden">
+                      <div
+                        className={`${barColor[i]} absolute bottom-0 left-0 w-full`}
+                        style={{ height: `${hPct}%` }}
+                        title={`${d.label}: ${formatCurrency(d.value)}`}
+                      />
+                    </div>
+                    <div className="mt-2 text-xs text-slate-600">{d.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+
         {/* Contact & WhatsApp */}
         <section className="bg-white rounded-lg shadow p-6 mb-8">
           <div className="flex items-center justify-between mb-4">
@@ -348,12 +449,12 @@ export default function AdminDashboard() {
               <p className="mt-1 text-xs text-slate-500">Format: country code + number (no + sign)</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Default WhatsApp Message</label>
+              <label className="block text-sm font_medium text-slate-700 mb-1">Default WhatsApp Message</label>
               <textarea
                 rows={3}
                 value={heroContact.whatsappMessage}
                 onChange={(e) => setHeroContact((p) => ({ ...p, whatsappMessage: e.target.value }))}
-                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:outline_none focus:ring-2 focus:ring-sky-500"
               />
             </div>
           </div>
@@ -366,7 +467,7 @@ export default function AdminDashboard() {
 
         {/* Homepage Public Counters */}
         <section className="bg-white rounded-lg shadow p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify_between mb-4">
             <h2 className="text-xl font-semibold text-slate-900">Homepage Counters</h2>
             <div className="text-xs text-slate-500">Course Packages • Skill Courses • Practical Learning</div>
           </div>

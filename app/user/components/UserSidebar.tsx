@@ -64,11 +64,11 @@ export default function UserSidebar({ onNavClick }: UserSidebarProps) {
           <Image
             className="h-8 w-8 text-sky-600"
             src={"/images/courseplexlogo.png"}
-            alt="Course Plex Logo"
+            alt="Plex Courses Logo"
             height={100}
             width={100}
           />
-          <h1 className="text-xl font-bold text-slate-800">Course Plex</h1>
+          <h1 className="text-xl font-bold text-slate-800">Plex Courses</h1>
         </Link>
         <nav className="flex flex-col space-y-2">
           {NAV_ITEMS.map((item) => (

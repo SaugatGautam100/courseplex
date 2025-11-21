@@ -463,7 +463,7 @@ function PurchasePaymentModal({
               Amount: <span className="font-semibold">Rs {Number(pkg.price || 0).toLocaleString()}</span>
             </p>
             <p className="text-sm text-slate-600">
-              Account: <span className="font-semibold">Course Plex</span>
+              Account: <span className="font-semibold">Plex Courses</span>
             </p>
           </div>
 

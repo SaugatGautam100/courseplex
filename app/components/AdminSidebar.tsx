@@ -141,11 +141,11 @@ export default function AdminSidebar({ onNavClick }: AdminSidebarProps) {
           <Image
             className="h-8 w-auto"
             src="/images/courseplexlogo.png"
-            alt="Course Plex Logo"
+            alt="Plex Courses Logo"
             height={40}
             width={40}
           />
-          <h1 className="text-xl font-bold text-slate-800">Course Plex Admin</h1>
+          <h1 className="text-xl font-bold text-slate-800">Plex Courses Admin</h1>
         </Link>
         <nav className="flex flex-col space-y-2">
           {NAV_ITEMS.map((item) => (
@@ -175,7 +175,7 @@ export default function AdminSidebar({ onNavClick }: AdminSidebarProps) {
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-sm font-semibold text-slate-800 truncate">Admin</h2>
-            <p className="text-xs text-slate-500 truncate">{user.email || "admin@courseplex.com"}</p>
+            <p className="text-xs text-slate-500 truncate">{user.email || "admin@PlexCourses.com"}</p>
           </div>
         </div>
         <button

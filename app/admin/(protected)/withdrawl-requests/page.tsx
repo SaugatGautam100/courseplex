@@ -22,11 +22,23 @@ type WithdrawalRequest = WithdrawalRequestDB & { id: string };
 
 type UserLite = { id: string; name?: string; email?: string; imageUrl?: string };
 
+// New: Deleted entry (written by delete-user route when user had completed transactions)
+type DeletedEntry = {
+  id: string;
+  name?: string;
+  email?: string;
+  deletedAt?: number; // epoch ms
+  hadCompletedTransaction?: boolean;
+};
+
 export default function WithdrawalRequestsPage() {
   const [requests, setRequests] = useState<WithdrawalRequest[]>([]);
   const [usersMap, setUsersMap] = useState<Record<string, UserLite>>({});
   const [searchQuery, setSearchQuery] = useState("");
   const [loading, setLoading] = useState(true);
+
+  // New: deleted users list (with completed transactions)
+  const [deletedEntries, setDeletedEntries] = useState<DeletedEntry[]>([]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
@@ -37,8 +49,16 @@ export default function WithdrawalRequestsPage() {
   useEffect(() => {
     const withdrawalRef = dbRef(database, "withdrawalRequests/");
     const unsubscribe = onValue(withdrawalRef, (snapshot) => {
-      const data = (snapshot.val() || {}) as Record<string, WithdrawalRequestDB>;
-      const list: WithdrawalRequest[] = Object.entries(data).map(([id, req]) => ({ id, ...req }));
+      const data = (snapshot.val() || {}) as Record<string, WithdrawalRequestDB | any>;
+
+      // Exclude _deleted node from normal requests
+      const normalOnly: Record<string, WithdrawalRequestDB> = {};
+      for (const [key, val] of Object.entries(data)) {
+        if (key === "_deleted") continue;
+        normalOnly[key] = val as WithdrawalRequestDB;
+      }
+
+      const list: WithdrawalRequest[] = Object.entries(normalOnly).map(([id, req]) => ({ id, ...req }));
 
       // Sort by status then date
       list.sort((a, b) => {
@@ -54,6 +74,31 @@ export default function WithdrawalRequestsPage() {
     });
 
     return () => unsubscribe();
+  }, []);
+
+  // Subscribe deleted list (withdrawalRequests/_deleted)
+  useEffect(() => {
+    const deletedRef = dbRef(database, "withdrawalRequests/_deleted");
+    const unsub = onValue(deletedRef, (snap) => {
+      const v = (snap.val() || {}) as Record<
+        string,
+        { name?: string; email?: string; deletedAt?: number; hadCompletedTransaction?: boolean }
+      >;
+      const list: DeletedEntry[] = Object.entries(v).map(([id, d]) => ({
+        id,
+        name: d?.name,
+        email: d?.email,
+        deletedAt: typeof d?.deletedAt === "number" ? d.deletedAt : undefined,
+        hadCompletedTransaction: d?.hadCompletedTransaction === true,
+      }));
+
+      // Only keep those flagged with completed transaction (should already be true per route)
+      const filtered = list.filter((x) => x.hadCompletedTransaction);
+      // Sort by deletedAt desc
+      filtered.sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+      setDeletedEntries(filtered);
+    });
+    return () => unsub();
   }, []);
 
   // Subscribe users for avatar + email
@@ -158,7 +203,7 @@ export default function WithdrawalRequestsPage() {
           body: JSON.stringify({
             to: userEmail,
             subject: `Your Withdrawal Request: ${newStatus}`,
-            htmlContent: `<h1>Withdrawal Status Update</h1><p>Hello ${request.userName},</p>${emailHtmlContent}<p>Thank you,<br/>The Course Plex Team</p>`,
+            htmlContent: `<h1>Withdrawal Status Update</h1><p>Hello ${request.userName},</p>${emailHtmlContent}<p>Thank you,<br/>The Plex Courses Team</p>`,
           }),
         });
       }
@@ -179,6 +224,48 @@ export default function WithdrawalRequestsPage() {
           <p className="mt-2 text-sm text-slate-600">Review and process user withdrawal requests</p>
         </div>
       </header>
+
+      {/* Deleted Accounts (with completed transactions) */}
+      {deletedEntries.length > 0 && (
+        <div className="mb-6 rounded-lg border bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <TrashIcon className="h-5 w-5 text-slate-600" />
+              <h3 className="text-base font-semibold text-slate-900">Deleted Accounts (Completed Transactions)</h3>
+            </div>
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">
+              {deletedEntries.length}
+            </span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left">
+              <thead className="bg-slate-50 text-xs font-medium uppercase text-slate-500">
+                <tr>
+                  <th className="px-4 py-2">User ID</th>
+                  <th className="px-4 py-2">Name</th>
+                  <th className="px-4 py-2">Email</th>
+                  <th className="px-4 py-2">Deleted At</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {deletedEntries.map((d) => (
+                  <tr key={d.id} className="text-sm">
+                    <td className="px-4 py-2 font-mono text-slate-700">{d.id}</td>
+                    <td className="px-4 py-2">{d.name || "-"}</td>
+                    <td className="px-4 py-2">{d.email || "-"}</td>
+                    <td className="px-4 py-2 text-slate-600">
+                      {d.deletedAt ? new Date(d.deletedAt).toLocaleString() : "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            This list shows only deleted accounts that had completed transactions. It does not affect normal requests.
+          </p>
+        </div>
+      )}
 
       {/* Stats (match orders) */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 mb-8">
@@ -256,7 +343,9 @@ export default function WithdrawalRequestsPage() {
                         </td>
                         <td className="px-6 py-4 font-mono text-slate-700">Rs {req.amount.toLocaleString()}</td>
                         <td className="px-6 py-4 text-slate-900">{req.paymentMethod}</td>
-                        <td className="px-6 py-4 text-slate-900">{req.requestedAt ? new Date(req.requestedAt).toLocaleString() : "-"}</td>
+                        <td className="px-6 py-4 text-slate-900">
+                          {req.requestedAt ? new Date(req.requestedAt).toLocaleString() : "-"}
+                        </td>
                         <td className="px-6 py-4">
                           <StatusBadge status={req.status} />
                         </td>
@@ -386,7 +475,7 @@ function WithdrawalReviewModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4" aria-modal="true">
       <div className="relative w-full max-w-lg rounded-lg bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify_between">
           <div>
             <h3 className="text-xl font-semibold text-slate-900">Review Withdrawal</h3>
             <p className="mt-1 text-slate-600">
@@ -489,7 +578,7 @@ function ActionsDropdown({
     <div className="relative inline-block text-left" ref={menuRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
+        className="inline-flex items-center justify-center rounded-md border border-slate-300 bg_white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
       >
         Actions
         <ChevronDownIcon className="ml-2 h-4 w-4" />
@@ -525,7 +614,7 @@ function ActionsDropdown({
                     onReject(request);
                     setIsOpen(false);
                   }}
-                  className="flex w-full items-center px-4 py-2 text-sm text-red-700 hover:bg-red-50"
+                  className="flex w_full items-center px-4 py-2 text-sm text-red-700 hover:bg-red-50"
                 >
                   <XIcon className="mr-3 h-4 w-4" />
                   Reject
@@ -662,6 +751,13 @@ function UserIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true" {...props}>
       <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+    </svg>
+  );
+}
+function TrashIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M9 3h6m-9 4h12m-10 0v12m4-12v12M5 7l1 14h12l1-14" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

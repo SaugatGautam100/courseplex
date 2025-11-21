@@ -3,10 +3,18 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useState, useEffect, useCallback, type FormEvent, type ChangeEvent } from "react";
-import { auth } from "@/lib/firebase";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type FormEvent,
+  type ChangeEvent,
+} from "react";
+import { auth, database } from "@/lib/firebase";
 import { signOut } from "firebase/auth";
 import { useAuth } from "@/hooks/useAuth";
+import { ref as dbRef, onValue } from "firebase/database";
 import type { SVGProps } from "react";
 
 // Types
@@ -18,6 +26,8 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/courses", label: "Courses" }, // renamed from Packages -> Courses
 ];
 
+type CourseLite = { id: string; name: string; imageUrl?: string };
+
 export default function Header() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { user, profile, loading } = useAuth();
@@ -28,6 +38,11 @@ export default function Header() {
   // Search states
   const [search, setSearch] = useState("");
   const [mobileSearch, setMobileSearch] = useState("");
+  const [desktopFocused, setDesktopFocused] = useState(false);
+  const [mobileFocused, setMobileFocused] = useState(false);
+
+  // Courses for suggestions
+  const [allCourses, setAllCourses] = useState<CourseLite[]>([]);
 
   useEffect(() => {
     setIsClient(true);
@@ -36,6 +51,21 @@ export default function Header() {
   useEffect(() => {
     setIsMobileMenuOpen(false);
   }, [pathname]);
+
+  // Live courses (packages) for suggestions
+  useEffect(() => {
+    const ref = dbRef(database, "packages");
+    const unsub = onValue(ref, snap => {
+      const v = snap.val() || {};
+      const list: CourseLite[] = Object.entries(v).map(([id, p]: any) => ({
+        id,
+        name: String(p?.name || "Untitled"),
+        imageUrl: p?.imageUrl || "",
+      }));
+      setAllCourses(list);
+    });
+    return () => unsub();
+  }, []);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -129,23 +159,52 @@ export default function Header() {
 
     // Default: Logged out
     return (
-      <div className={`flex items-center gap-2 ${isMobile ? "grid grid-cols-2" : ""}`}>
+      <div className={`flex items-center gap-2`}>
         <Link
           href="/login"
           onClick={closeMobileMenu}
-          className="inline-flex items-center justify-center rounded-full bg-white/70 px-4 py-2 text-sm font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-white"
+          className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-white/70 px-3 text-[13px] font-medium text-slate-700 shadow-sm ring-1 ring-slate-200 transition hover:bg-white"
         >
           Login
         </Link>
         <Link
           href="/signup"
           onClick={closeMobileMenu}
-          className="inline-flex items-center justify-center rounded-full bg-gradient-to-r from-sky-600 to-cyan-600 px-4 py-2 text-sm font-semibold text-white shadow-sm ring-1 ring-sky-700/20 transition hover:opacity-95"
+          className="inline-flex h-9 shrink-0 items-center justify-center whitespace-nowrap rounded-full bg-gradient-to-r from-sky-600 to-cyan-600 px-3 text-[13px] font-semibold text-white shadow-sm ring-1 ring-sky-700/20 transition hover:opacity-95 min-w-[84px]"
         >
           Sign Up
         </Link>
       </div>
     );
+  };
+
+  // Suggestions
+  const desktopSuggestions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return allCourses
+      .filter(c => c.name.toLowerCase().includes(q))
+      .slice(0, 6);
+  }, [search, allCourses]);
+
+  const mobileSuggestions = useMemo(() => {
+    const q = mobileSearch.trim().toLowerCase();
+    if (!q) return [];
+    return allCourses
+      .filter(c => c.name.toLowerCase().includes(q))
+      .slice(0, 6);
+  }, [mobileSearch, allCourses]);
+
+  const handlePickCourse = (course: CourseLite, source: "desktop" | "mobile") => {
+    if (source === "desktop") {
+      setSearch("");
+      setDesktopFocused(false);
+    } else {
+      setMobileSearch("");
+      setMobileFocused(false);
+      closeMobileMenu();
+    }
+    router.push(`/signup?packageId=${encodeURIComponent(course.id)}`);
   };
 
   // Desktop search submit
@@ -180,12 +239,12 @@ export default function Header() {
             <Image
               className="h-8 w-8 text-sky-600"
               src={"/images/courseplexlogo.png"}
-              alt="CoursePlex Logo"
+              alt="PlexCourses Logo"
               height={100}
               width={100}
             />
             <span className="bg-gradient-to-r from-sky-600 via-cyan-600 to-fuchsia-600 bg-clip-text text-lg font-extrabold text-transparent">
-              CoursePlex
+              PlexCourses
             </span>
           </Link>
 
@@ -195,6 +254,8 @@ export default function Header() {
             <input
               value={search}
               onChange={(e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
+              onFocus={() => setDesktopFocused(true)}
+              onBlur={() => setDesktopFocused(false)}
               type="search"
               placeholder="Search courses..."
               aria-label="Search courses"
@@ -206,6 +267,42 @@ export default function Header() {
             >
               Search
             </button>
+
+            {/* Desktop suggestions */}
+            {desktopFocused && desktopSuggestions.length > 0 && (
+              <ul className="absolute left-0 right-0 top-full z-40 mt-1 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                {desktopSuggestions.map((c) => (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handlePickCourse(c, "desktop");
+                      }}
+                      className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-slate-50"
+                    >
+                      <div className="h-8 w-8 overflow-hidden rounded bg-slate-100 ring-1 ring-slate-200">
+                        {c.imageUrl ? (
+                          <Image
+                            src={c.imageUrl}
+                            alt={c.name}
+                            width={32}
+                            height={32}
+                            className="h-8 w-8 object-cover"
+                          />
+                        ) : (
+                          <div className="h-8 w-8" />
+                        )}
+                      </div>
+                      <span className="text-sm text-slate-800">{c.name}</span>
+                      <span className="ml-auto text-[11px] font-semibold text-sky-700">
+                        Enroll
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </form>
 
           {/* Desktop Nav (appears to the RIGHT of the search) */}
@@ -255,11 +352,11 @@ export default function Header() {
                   <Image
                     className="h-8 w-8 text-sky-600"
                     src={"/images/courseplexlogo.png"}
-                    alt="CoursePlex Logo"
+                    alt="PlexCourses Logo"
                     height={100}
                     width={100}
                   />
-                  <span className="text-base font-extrabold">CoursePlex</span>
+                  <span className="text-base font-extrabold">PlexCourses</span>
                 </Link>
               </div>
               <button
@@ -278,11 +375,49 @@ export default function Header() {
                 <input
                   value={mobileSearch}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setMobileSearch(e.target.value)}
+                  onFocus={() => setMobileFocused(true)}
+                  onBlur={() => setMobileFocused(false)}
                   type="search"
                   placeholder="Search courses"
                   aria-label="Search courses"
                   className="w-full rounded-full border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 shadow-sm outline-none ring-1 ring-transparent transition placeholder:text-slate-400 focus:border-sky-300 focus:ring-sky-200"
                 />
+
+                {/* Mobile suggestions */}
+                {mobileFocused && mobileSuggestions.length > 0 && (
+                  <ul className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-auto rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
+                    {mobileSuggestions.map((c) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handlePickCourse(c, "mobile");
+                          }}
+                          className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-slate-50"
+                        >
+                          <div className="h-8 w-8 overflow-hidden rounded bg-slate-100 ring-1 ring-slate-200">
+                            {c.imageUrl ? (
+                              <Image
+                                src={c.imageUrl}
+                                alt={c.name}
+                                width={32}
+                                height={32}
+                                className="h-8 w-8 object-cover"
+                              />
+                            ) : (
+                              <div className="h-8 w-8" />
+                            )}
+                          </div>
+                          <span className="text-sm text-slate-800">{c.name}</span>
+                          <span className="ml-auto text-[11px] font-semibold text-sky-700">
+                            Enroll
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <button
                 type="submit"
@@ -309,7 +444,7 @@ export default function Header() {
 
             <div className="mt-4 border-t border-slate-200 pt-4">
               <div className="flex items-center justify-between">
-                <AuthButtons />
+                <AuthButtons isMobile={true} />
               </div>
             </div>
           </div>

@@ -37,6 +37,22 @@ type CashbackDbRec = {
 
 type PackagesMap = Record<string, { name?: string }>;
 
+// Helper to format date + time with timezone
+function formatDateTime(input: string) {
+  const d = new Date(input);
+  if (isNaN(d.getTime())) return "—";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  });
+}
+
 export default function TransactionsPage() {
   const [uid, setUid] = useState<string | null>(null);
 
@@ -72,14 +88,19 @@ export default function TransactionsPage() {
         withdrawalRef,
         (withdrawalSnap) => {
           const withdrawalData = (withdrawalSnap.val() as Record<string, WithdrawalDbRec>) || {};
-          const withdrawalList: UnifiedTransaction[] = Object.entries(withdrawalData).map(([id, t]) => ({
-            id,
-            description: t.product || "Withdrawal",
-            amount: Number(t.amount || 0),
-            date: t.date,
-            status: t.status,
-            type: "withdrawal",
-          }));
+          const withdrawalList: UnifiedTransaction[] = Object.entries(withdrawalData).map(([id, t]) => {
+            // Normalize unknown date string to ISO if possible
+            const dt = new Date(t.date);
+            const iso = isNaN(dt.getTime()) ? t.date : dt.toISOString();
+            return {
+              id,
+              description: t.product || "Withdrawal",
+              amount: Number(t.amount || 0),
+              date: iso,
+              status: t.status,
+              type: "withdrawal",
+            };
+          });
           setWithdrawals(withdrawalList);
           setLoaded((s) => ({ ...s, withdrawals: true }));
         },
@@ -103,7 +124,7 @@ export default function TransactionsPage() {
         cashbacksRef,
         (cashbackSnap) => {
           setCashbacksRaw((cashbackSnap.val() as Record<string, CashbackDbRec>) || {});
-          setLoaded((s) => ({ ...s, cashbacks: true }));
+          setLoaded((s) => ({ ...s, cashbacks: true }))
         },
         () => setLoaded((s) => ({ ...s, cashbacks: true }))
       );
@@ -194,13 +215,25 @@ export default function TransactionsPage() {
               <div className="flex justify-between items-start">
                 <div>
                   <p className="font-semibold text-slate-800">{t.description}</p>
-                  <p className="text-sm text-slate-500">{new Date(t.date).toLocaleDateString()}</p>
+                  <time
+                    className="text-sm text-slate-500"
+                    dateTime={t.date}
+                    title={new Date(t.date).toISOString()}
+                  >
+                    {formatDateTime(t.date)}
+                  </time>
                 </div>
                 <StatusBadge status={t.status} />
               </div>
               <div className="mt-4 border-t pt-2 text-right">
-                <p className={`text-lg font-mono font-semibold ${t.type === "earning" ? "text-green-600" : "text-red-600"}`}>
-                  {t.type === "earning" ? `+Rs ${t.amount.toLocaleString()}` : `-Rs ${Math.abs(t.amount).toLocaleString()}`}
+                <p
+                  className={`text-lg font-mono font-semibold ${
+                    t.type === "earning" ? "text-green-600" : "text-red-600"
+                  }`}
+                >
+                  {t.type === "earning"
+                    ? `+Rs ${t.amount.toLocaleString()}`
+                    : `-Rs ${Math.abs(t.amount).toLocaleString()}`}
                 </p>
               </div>
             </div>
@@ -214,7 +247,7 @@ export default function TransactionsPage() {
           <table className="min-w-full divide-y divide-slate-200">
             <thead className="bg-slate-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">Date</th>
+                <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">Date & Time</th>
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">Description</th>
                 <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-slate-500">Status</th>
                 <th className="px-6 py-3 text-right text-xs font-medium uppercase tracking-wider text-slate-500">Amount</th>
@@ -222,19 +255,37 @@ export default function TransactionsPage() {
             </thead>
             <tbody className="divide-y divide-slate-200">
               {loading ? (
-                <tr><td colSpan={4} className="p-8 text-center text-slate-500">Loading transactions...</td></tr>
+                <tr>
+                  <td colSpan={4} className="p-8 text-center text-slate-500">
+                    Loading transactions...
+                  </td>
+                </tr>
               ) : transactions.length === 0 ? (
-                <tr><td colSpan={4} className="p-8 text-center text-slate-500">No transactions found.</td></tr>
+                <tr>
+                  <td colSpan={4} className="p-8 text-center text-slate-500">
+                    No transactions found.
+                  </td>
+                </tr>
               ) : (
                 transactions.map((t) => (
                   <tr key={t.id}>
-                    <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-500">{new Date(t.date).toLocaleDateString()}</td>
+                    <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600">
+                      <time dateTime={t.date} title={new Date(t.date).toISOString()}>
+                        {formatDateTime(t.date)}
+                      </time>
+                    </td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm font-medium text-slate-900">{t.description}</td>
                     <td className="whitespace-nowrap px-6 py-4 text-sm">
                       <StatusBadge status={t.status} />
                     </td>
-                    <td className={`whitespace-nowrap px-6 py-4 text-right text-sm font-mono font-semibold ${t.type === 'earning' ? 'text-green-600' : 'text-red-600'}`}>
-                      {t.type === 'earning' ? `+Rs ${t.amount.toLocaleString()}` : `-Rs ${Math.abs(t.amount).toLocaleString()}`}
+                    <td
+                      className={`whitespace-nowrap px-6 py-4 text-right text-sm font-mono font-semibold ${
+                        t.type === "earning" ? "text-green-600" : "text-red-600"
+                      }`}
+                    >
+                      {t.type === "earning"
+                        ? `+Rs ${t.amount.toLocaleString()}`
+                        : `-Rs ${Math.abs(t.amount).toLocaleString()}`}
                     </td>
                   </tr>
                 ))

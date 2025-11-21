@@ -25,11 +25,11 @@ export default function UserLayoutClient({ children }: { children: ReactNode }) 
               <Image
                 className="h-8 w-auto"
                 src={"/images/courseplexlogo.png"}
-                alt="Course Plex Logo"
+                alt="Plex Courses Logo"
                 height={40}
                 width={40}
               />
-              <h1 className="text-xl font-bold text-slate-800">Course Plex</h1>
+              <h1 className="text-xl font-bold text-slate-800">Plex Courses</h1>
             </div>
             <button
               onClick={() => setIsMobileMenuOpen(true)}

@@ -1,6 +1,6 @@
 {
   "apphosting": {
-    "backendId": "courseplex",
+    "backendId": "PlexCourses",
     "rootDir": "/",
     "ignore": [
       "node_modules",

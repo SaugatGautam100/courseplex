@@ -9,18 +9,11 @@ import { useAuth } from "@/hooks/useAuth";
 import WhatsAppButton from "@/app/components/WhatsAppButton";
 import type { SVGProps } from "react";
 
-const BRAND = "Course Plex";
+const BRAND = "Plex Courses";
 
 // E-learning hero image (Unsplash)
 const HERO_MAIN_URL =
   "https://images.unsplash.com/photo-1496171367470-9ed9a91ea931?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=870";
-
-/*
-If you prefer Firebase Storage or GCS, just replace the URLs above, e.g.:
-
-const HERO_MAIN_URL =
-  "https://firebasestorage.googleapis.com/v0/b/<your-bucket>/o/elearning%2Fhero.jpg?alt=media";
-*/
 
 // Payout config
 const AFFILIATE_PCT = 70;
@@ -33,17 +26,17 @@ type PackagesMapRaw = Record<
     name: string;
     price: number;
     imageUrl: string;
-    courseIds?: Record<string, boolean>; // included sub-courses
+    courseIds?: Record<string, boolean>;
     highlight: boolean;
     badge: string;
-    features?: string[]; // legacy
+    features?: string[];
 
-    // NEW: Discounts
+    // Discounts
     discountActive?: boolean;
     discountPercent?: number;
     discountLabel?: string;
 
-    // NEW: Reviews
+    // Reviews
     showRating?: boolean;
     rating?: number;
     ratingCount?: number;
@@ -63,17 +56,17 @@ type CourseBundle = {
   name: string;
   price: number;
   imageUrl: string;
-  subCourseIds?: Record<string, boolean>; // from courseIds in DB
+  subCourseIds?: Record<string, boolean>;
   highlight: boolean;
   badge: string;
-  subCourses?: string[]; // titles of included sub-courses
+  subCourses?: string[];
 
-  // NEW: Discounts
+  // Discounts
   discountActive?: boolean;
   discountPercent?: number;
   discountLabel?: string;
 
-  // NEW: Reviews
+  // Reviews
   showRating?: boolean;
   rating?: number;
   ratingCount?: number;
@@ -100,9 +93,9 @@ type SiteMetrics = {
 
 /* ================== Page ================== */
 export default function Page() {
-  const [courses, setCourses] = useState<CourseBundle[]>([]); // UI: Courses (DB: packages)
-  const [subCourses, setSubCourses] = useState<SubCourse[]>([]); // UI: Sub-courses (DB: courses)
-  const [topCourseIds, setTopCourseIds] = useState<string[]>([]); // from homepage/topPackageIds
+  const [courses, setCourses] = useState<CourseBundle[]>([]);
+  const [subCourses, setSubCourses] = useState<SubCourse[]>([]);
+  const [topCourseIds, setTopCourseIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const { user } = useAuth();
 
@@ -146,7 +139,7 @@ export default function Page() {
               ? Object.keys(pkg.courseIds).map(
                   (cid) => subCoursesData[cid]?.title || "Untitled Sub-course"
                 )
-              : pkg.features ?? []; // fallback if legacy features exist
+              : pkg.features ?? [];
 
             return {
               id,
@@ -158,7 +151,7 @@ export default function Page() {
               badge: pkg.badge,
               subCourses: subCourseTitles,
 
-              // NEW: Discounts & Reviews
+              // Discounts & Reviews
               discountActive: Boolean(pkg.discountActive),
               discountPercent:
                 typeof pkg.discountPercent === "number" ? pkg.discountPercent : 0,
@@ -396,7 +389,7 @@ function Hero({
             </dl>
           </div>
 
-          {/* Right: Media (Images fixed via local files) */}
+          {/* Right: Media */}
           <div className="relative h-full">
             <HeroMedia />
           </div>
@@ -411,7 +404,6 @@ function HeroMedia() {
 
   return (
     <div className="relative mx-auto w-full max-w-xl">
-      {/* Main image */}
       <div className="relative w-full overflow-hidden rounded-2xl shadow-xl ring-1 ring-slate-200 h-[240px] sm:h-[320px] md:h-[380px] lg:h-[420px]">
         <Image
           src={mainSrc}
@@ -454,12 +446,9 @@ function HeroMedia() {
 function HeroDecor() {
   return (
     <div aria-hidden className="absolute inset-0">
-      {/* Gradient */}
       <div className="absolute inset-0 bg-gradient-to-br from-indigo-50 via-white to-sky-50" />
-      {/* Glow blobs */}
       <div className="absolute -left-24 -top-32 h-[360px] w-[360px] -rotate-12 rounded-[48px] bg-gradient-to-tr from-indigo-100 to-fuchsia-100 blur-2xl sm:h-[420px] sm:w-[420px]" />
       <div className="absolute -right-16 -bottom-20 h-[380px] w-[380px] rotate-12 rounded-[56px] bg-gradient-to-br from-fuchsia-100 to-sky-100 blur-2xl sm:h-[520px] sm:w-[520px]" />
-      {/* Inner frame */}
       <div className="absolute inset-x-3 top-3 bottom-3 rounded-2xl bg-white/60 ring-1 ring-slate-100 sm:inset-x-6 sm:top-6 sm:bottom-6" />
     </div>
   );
@@ -509,14 +498,15 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
   const basePrice = Number(course.price || 0);
   const discountPct = Math.max(0, Math.min(100, Number(course.discountPercent || 0)));
   const hasDiscount = Boolean(course.discountActive && discountPct > 0);
-  const finalPrice = hasDiscount ? Math.max(0, Math.round(basePrice - (basePrice * discountPct) / 100)) : basePrice;
+  const finalPrice = hasDiscount
+    ? Math.max(0, Math.round(basePrice - (basePrice * discountPct) / 100))
+    : basePrice;
 
   // Calculate affiliate and cashback against final payable price
   const affiliateEarn = Math.floor((finalPrice * AFFILIATE_PCT) / 100);
   const buyerCashback = Math.floor((finalPrice * CASHBACK_PCT) / 100);
 
-  const coverSrc =
-    course.imageUrl?.trim() ? course.imageUrl : "/images/course-fallback.jpg";
+  const coverSrc = course.imageUrl?.trim() ? course.imageUrl : "/images/course-fallback.jpg";
 
   return (
     <div className="group relative flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
@@ -599,14 +589,12 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
               <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
                 -{discountPct}%
               </span>
-              <span className="text-sm text-slate-500">/ lifetime</span>
             </div>
           ) : (
             <div className="flex items-baseline gap-1">
               <span className="text-3xl font-extrabold tracking-tight">
                 Rs {basePrice.toLocaleString()}
               </span>
-              <span className="text-sm text-slate-500">/ lifetime</span>
             </div>
           )}
         </div>
@@ -621,13 +609,13 @@ function CourseCard({ course, user }: { course: CourseBundle; user: MinimalUser 
           </div>
         </div>
 
-        {/* Perks */}
-        <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
-          <span className="inline-flex items-center gap-1">
-            <ShieldIcon className="h-4 w-4 text-indigo-600" /> Lifetime Access
-          </span>
+        {/* Perks (added Certificate) */}
+        <div className="mt-4 flex items-center gap-4 text-xs text-slate-500">
           <span className="inline-flex items-center gap-1">
             <StarIcon className="h-4 w-4 text-amber-500" /> Mentor Support
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <CertificateIcon className="h-4 w-4 text-emerald-600" /> Certificate
           </span>
         </div>
 
@@ -672,8 +660,8 @@ function WhyUs() {
       color: "from-amber-500 to-orange-500",
     },
     {
-      title: "Lifetime Access",
-      desc: "Rewatch lessons and updates anytime.",
+      title: "Flexible Learning",
+      desc: "Learn at your own pace and earn a certificate on completion.",
       icon: ClockIcon,
       color: "from-violet-500 to-indigo-500",
     },
@@ -793,6 +781,13 @@ function ClockIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
       <path d="M12 2a10 10 0 1010 10A10.011 10.011 0 0012 2zm1 11h4v-2h-2V7h-2v6z" />
+    </svg>
+  );
+}
+function CertificateIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden {...props}>
+      <path d="M12 2a5 5 0 110 10 5 5 0 010-10zm-7 14l7-2 7 2v4l-7-2-7 2v-4z" />
     </svg>
   );
 }

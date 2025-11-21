@@ -68,9 +68,23 @@ type EnrichedOrder = Order & {
 };
 
 const formatCurrency = (n?: number) => (n != null && isFinite(n) ? `Rs ${n.toLocaleString()}` : "N/A");
-const startOfTodayTs = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
-const startOfWeekTs = () => { const now = new Date(); const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()); d.setHours(0, 0, 0, 0); return d.getTime(); };
-const startOfMonthTs = () => { const now = new Date(); const d = new Date(now.getFullYear(), now.getMonth(), 1); d.setHours(0, 0, 0, 0); return d.getTime(); };
+const startOfTodayTs = () => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+const startOfWeekTs = () => {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay());
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+const startOfMonthTs = () => {
+  const now = new Date();
+  const d = new Date(now.getFullYear(), now.getMonth(), 1);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
 
 // Force numeric coercion for DB values
 const toNumber = (v: unknown) => {
@@ -127,7 +141,8 @@ export default function AdminOrdersPage() {
           highlight: Boolean(p.highlight),
           badge: p.badge || "",
           features: Array.isArray(p.features) ? p.features : undefined,
-          commissionPercent: typeof p.commissionPercent === "number" ? p.commissionPercent : toNumber(p.commissionPercent) || 58,
+          commissionPercent:
+            typeof p.commissionPercent === "number" ? p.commissionPercent : toNumber(p.commissionPercent) || 58,
         };
       });
       setAllPackages(pkMap);
@@ -146,8 +161,10 @@ export default function AdminOrdersPage() {
           referrerId: order.referrerId ? String(order.referrerId) : undefined,
           createdAt: String(order.createdAt || new Date().toISOString()),
           email: String(order.email || ""),
-          commissionAmount: typeof order.commissionAmount === "number" ? order.commissionAmount : toNumber(order.commissionAmount) || undefined,
-          cashbackAmount: typeof order.cashbackAmount === "number" ? order.cashbackAmount : toNumber(order.cashbackAmount) || undefined,
+          commissionAmount:
+            typeof order.commissionAmount === "number" ? order.commissionAmount : toNumber(order.commissionAmount) || undefined,
+          cashbackAmount:
+            typeof order.cashbackAmount === "number" ? order.cashbackAmount : toNumber(order.cashbackAmount) || undefined,
           paymentProofUrl: order.paymentProofUrl,
         };
 
@@ -158,11 +175,11 @@ export default function AdminOrdersPage() {
         const refU = base.referrerId ? usersData[base.referrerId] : undefined;
         const refName = base.referrerId && refU ? String(refU?.name || "") : undefined;
 
-        const price = base.courseId && packagesData[base.courseId]?.price
-          ? toNumber(packagesData[base.courseId]?.price)
-          : undefined;
+        const price =
+          base.courseId && packagesData[base.courseId]?.price ? toNumber(packagesData[base.courseId]?.price) : undefined;
 
-        const customerImageUrl = base.userId && usersData[base.userId]?.imageUrl ? String(usersData[base.userId].imageUrl) : undefined;
+        const customerImageUrl =
+          base.userId && usersData[base.userId]?.imageUrl ? String(usersData[base.userId].imageUrl) : undefined;
 
         const sa = refU?.specialAccess;
         const referrerSpecialPct =
@@ -183,7 +200,8 @@ export default function AdminOrdersPage() {
 
       enrichedOrdersArray.sort((a, b) => {
         const statusOrder: Record<OrderStatus, number> = { "Pending Approval": 0, Completed: 1, Rejected: 2 };
-        if (statusOrder[a.status] !== statusOrder[b.status]) return (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
+        if (statusOrder[a.status] !== statusOrder[b.status])
+          return (statusOrder[a.status] ?? 3) - (statusOrder[b.status] ?? 3);
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
 
@@ -200,9 +218,15 @@ export default function AdminOrdersPage() {
     const usersRef = dbRef(database, "users");
     const packagesRef = dbRef(database, "packages");
 
-    const unsubOrders = onValue(ordersRef, () => { fetchDataAndCombine(); });
-    const unsubUsers = onValue(usersRef, () => { fetchDataAndCombine(); });
-    const unsubPk = onValue(packagesRef, () => { fetchDataAndCombine(); });
+    const unsubOrders = onValue(ordersRef, () => {
+      fetchDataAndCombine();
+    });
+    const unsubUsers = onValue(usersRef, () => {
+      fetchDataAndCombine();
+    });
+    const unsubPk = onValue(packagesRef, () => {
+      fetchDataAndCombine();
+    });
 
     return () => {
       unsubOrders();
@@ -211,22 +235,28 @@ export default function AdminOrdersPage() {
     };
   }, [fetchDataAndCombine]);
 
-  const filteredOrders = allOrders.filter(o =>
-    o.customerName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    o.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    o.product?.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredOrders = allOrders.filter(
+    (o) =>
+      o.customerName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      o.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      o.product?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   // Stats
   const stats = {
     total: filteredOrders.length,
-    pending: filteredOrders.filter(o => o.status === "Pending Approval").length,
-    completed: filteredOrders.filter(o => o.status === "Completed").length,
-    rejected: filteredOrders.filter(o => o.status === "Rejected").length,
+    pending: filteredOrders.filter((o) => o.status === "Pending Approval").length,
+    completed: filteredOrders.filter((o) => o.status === "Completed").length,
+    rejected: filteredOrders.filter((o) => o.status === "Rejected").length,
   };
 
   const handleApproveOrder = async (order: EnrichedOrder) => {
-    if (!window.confirm("Approve this request? This will activate/upgrade the user, award commission, and apply cashback.")) return;
+    if (
+      !window.confirm(
+        "Approve this request? This will activate/upgrade the user, award commission, and apply cashback."
+      )
+    )
+      return;
     try {
       const updates: Record<string, unknown> = {};
       const isUpgrade = typeof order.product === "string" && order.product.startsWith("Upgrade");
@@ -253,7 +283,7 @@ export default function AdminOrdersPage() {
       const cashbackPct = 10;
 
       if (purchasedPackagePrice > 0 && order.referrerId) {
-        // Commission percent strictly from the course
+        // Commission percent strictly from the course (fallback 58)
         let coursePct = allPackages[order.courseId]?.commissionPercent;
         if (typeof coursePct !== "number") {
           const pkgSnap = await get(dbRef(database, `packages/${order.courseId}`));
@@ -348,13 +378,15 @@ export default function AdminOrdersPage() {
         });
       }
 
-      // Email
-      const subject = isUpgrade ? "Your Package Upgrade is Complete!" : "Your Course Plex Account is Activated!";
+      // Email (domain fixed to plexcourses.com)
+      const subject = isUpgrade
+        ? "Your Package Upgrade is Complete!"
+        : "Your Plex Courses Account is Activated!";
       const htmlContent = `<h1>Congratulations, ${order.customerName}!</h1><p>${
         isUpgrade
           ? `Your upgrade to <strong>${order.product.replace("Upgrade to: ", "")}</strong> has been approved.`
           : "Your account has been approved and is now active. Please log in again to access your dashboard."
-      }</p>${order.referrerId ? `<p>A 10% cashback has been credited to your account balance.</p>` : ""}<p><a href="https://courseplex.com.np/login">Log in to Dashboard</a></p>`;
+      }</p>${order.referrerId ? `<p>A 10% cashback has been credited to your account balance.</p>` : ""}<p><a href="https://plexcourses.com/login">Log in to Dashboard</a></p>`;
 
       await fetch("/api/send-email", {
         method: "POST",
@@ -371,7 +403,9 @@ export default function AdminOrdersPage() {
 
   const handleRejectOrder = async (order: EnrichedOrder) => {
     const isUpgrade = typeof order.product === "string" && order.product.startsWith("Upgrade");
-    const confirmMsg = isUpgrade ? "Reject this upgrade request?" : "Reject this signup request? This will mark the user as rejected.";
+    const confirmMsg = isUpgrade
+      ? "Reject this upgrade request?"
+      : "Reject this signup request? This will mark the user as rejected.";
     if (!window.confirm(confirmMsg)) return;
 
     try {
@@ -384,14 +418,16 @@ export default function AdminOrdersPage() {
         const refSnap = await get(refRef);
         if (refSnap.exists()) {
           const referrals = refSnap.val() || {};
-          const keyToRemove = Object.keys(referrals).find(k => referrals[k]?.email === order.email);
+          const keyToRemove = Object.keys(referrals).find((k) => referrals[k]?.email === order.email);
           if (keyToRemove) updates[`/users/${order.referrerId}/referrals/${keyToRemove}`] = null;
         }
       }
 
       await update(dbRef(database), updates);
 
-      const subject = isUpgrade ? "Your Upgrade Request Was Not Approved" : "Your Account Request Was Not Approved";
+      const subject = isUpgrade
+        ? "Your Upgrade Request Was Not Approved"
+        : "Your Account Request Was Not Approved";
       const htmlContent = isUpgrade
         ? `<h1>Upgrade Not Approved</h1><p>Your upgrade request was not approved.</p>`
         : `<h1>Account Not Approved</h1><p>Your account request was not approved.</p>`;
@@ -452,7 +488,7 @@ export default function AdminOrdersPage() {
   };
 
   const handleDeleteUser = async (userToDelete: User) => {
-    if (!window.confirm(`Are you sure you want to permanently delete ${userToDelete.name}? This will remove their data across the platform.`)) return;
+    if (!window.confirm(`This will permanently delete the account for ${userToDelete.name}. Continue?`)) return;
     try {
       const idToken = await auth.currentUser?.getIdToken();
       if (!idToken) throw new Error("Admin not authenticated.");
@@ -460,11 +496,11 @@ export default function AdminOrdersPage() {
       const response = await fetch("/api/admin/delete-user", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
-        body: JSON.stringify({ uidToDelete: userToDelete.id }),
+        body: JSON.stringify({ uidToDelete: userToDelete.id, cascadeAffiliates: false }),
       });
       if (!response.ok) throw new Error((await response.json()).error || "Failed to delete user.");
 
-      alert(`User ${userToDelete.name} has been deleted and related data cleaned up.`);
+      alert(`User ${userToDelete.name} has been deleted. Related data cleaned up.`);
       setIsEditModalOpen(false);
       await fetchDataAndCombine();
     } catch (error) {
@@ -555,14 +591,30 @@ export default function AdminOrdersPage() {
             <table className="w-full text-left">
               <thead className="border-b bg-slate-50">
                 <tr>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Profile</th>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Customer</th>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Request</th>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Payment</th>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Proof</th>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Referred By</th>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">Status</th>
-                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500 text-center">Actions</th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">
+                    Profile
+                  </th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">
+                    Customer
+                  </th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">
+                    Request
+                  </th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">
+                    Payment
+                  </th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">
+                    Proof
+                  </th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">
+                    Referred By
+                  </th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500">
+                    Status
+                  </th>
+                  <th className="px-6 py-4 text-xs font-medium uppercase tracking-wider text-slate-500 text-center">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 bg-white">
@@ -582,7 +634,7 @@ export default function AdminOrdersPage() {
                     </td>
                   </tr>
                 ) : (
-                  filteredOrders.map(order => (
+                  filteredOrders.map((order) => (
                     <tr key={order.id} className="hover:bg-slate-50">
                       <td className="px-6 py-4">
                         <div className="h-10 w-10 rounded-full overflow-hidden bg-slate-200 flex items-center justify-center">
@@ -619,7 +671,10 @@ export default function AdminOrdersPage() {
                       <td className="px-6 py-4">
                         <div>
                           <div className="text-sm font-medium text-slate-900">{order.paymentMethod}</div>
-                          <div className="mt-1 max-w-[180px] truncate text-xs text-slate-500 font-mono" title={order.transactionCode}>
+                          <div
+                            className="mt-1 max-w-[180px] truncate text-xs text-slate-500 font-mono"
+                            title={order.transactionCode}
+                          >
                             {order.transactionCode}
                           </div>
                         </div>
@@ -677,11 +732,9 @@ export default function AdminOrdersPage() {
             <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-sky-600"></div>
           </div>
         ) : filteredOrders.length === 0 ? (
-          <div className="rounded-lg border bg-white p-6 text-center text-slate-500">
-            No orders found.
-          </div>
+          <div className="rounded-lg border bg-white p-6 text-center text-slate-500">No orders found.</div>
         ) : (
-          filteredOrders.map(order => (
+          filteredOrders.map((order) => (
             <div key={order.id} className="rounded-lg border bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-start justify-between">
                 <div className="flex items-center gap-3">
@@ -946,7 +999,8 @@ function EditUserModal({
             </div>
             {typeof user.balance === "number" && (
               <div className="mt-2 text-xs text-slate-500">
-                Current Balance: <span className="font-semibold text-slate-700">{formatCurrency(user.balance)}</span>
+                Current Balance:{" "}
+                <span className="font-semibold text-slate-700">{formatCurrency(user.balance)}</span>
               </div>
             )}
           </div>
@@ -1013,7 +1067,8 @@ function EditUserModal({
 
           {user.specialAccess && user.specialAccess.active !== false && (
             <div className="mt-4 rounded-md bg-fuchsia-50 p-3 text-xs text-fuchsia-700">
-              Special access active — package: {user.specialAccess.packageId} • {user.specialAccess.commissionPercent ?? 58}%
+              Special access active — package: {user.specialAccess.packageId} •{" "}
+              {user.specialAccess.commissionPercent ?? 58}%
             </div>
           )}
         </div>
@@ -1044,8 +1099,10 @@ function InputField({
 
 function StatusBadge({ status }: { status: OrderStatus }) {
   const base = "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold";
-  if (status === "Completed") return <span className={`${base} bg-green-100 text-green-800`}>Completed</span>;
-  if (status === "Rejected") return <span className={`${base} bg-red-100 text-red-800`}>Rejected</span>;
+  if (status === "Completed")
+    return <span className={`${base} bg-green-100 text-green-800`}>Completed</span>;
+  if (status === "Rejected")
+    return <span className={`${base} bg-red-100 text-red-800`}>Rejected</span>;
   return <span className={`${base} bg-yellow-100 text-yellow-800`}>Pending</span>;
 }
 
@@ -1053,7 +1110,11 @@ function StatusBadge({ status }: { status: OrderStatus }) {
 function SearchIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" {...props}>
-      <path fillRule="evenodd" d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z" clipRule="evenodd" />
+      <path
+        fillRule="evenodd"
+        d="M9 3.5a5.5 5.5 0 100 11 5.5 5.5 0 000-11zM2 9a7 7 0 1112.452 4.391l3.328 3.329a.75.75 0 11-1.06 1.06l-3.329-3.328A7 7 0 012 9z"
+        clipRule="evenodd"
+      />
     </svg>
   );
 }

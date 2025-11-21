@@ -6,17 +6,42 @@ import { ref as dbRef, onValue, set, push, update } from "firebase/database";
 import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
 import Link from "next/link";
 import Image from "next/image";
-import type { SVGProps } from "react"; // FIXED: Imported SVGProps
+import type { SVGProps } from "react";
 
 // Types
 type KycStatus = "Not Submitted" | "Pending" | "Approved" | "Rejected";
-type UserProfile = { name: string; balance: number; kyc?: { status: KycStatus }; withdrawalQrUrl?: string }; // UPDATED: Added withdrawalQrUrl
-type WithdrawalRequest = { id: string; userId: string; amount: number; paymentMethod: string; details: string; qrUrl?: string; requestedAt: string; status: "Pending" | "Completed" | "Rejected" };
+type UserProfile = { name: string; balance: number; kyc?: { status: KycStatus }; withdrawalQrUrl?: string };
+type WithdrawalRequest = {
+  id: string;
+  userId: string;
+  amount: number;
+  paymentMethod: string;
+  details: string;
+  qrUrl?: string;
+  requestedAt: string;
+  status: "Pending" | "Completed" | "Rejected";
+};
 
 type WithdrawalRequestDb = Omit<WithdrawalRequest, "id">;
 type WithdrawalRequestsDb = Record<string, WithdrawalRequestDb>;
 
 const MINIMUM_WITHDRAWAL_AMOUNT = 400;
+
+// Full timestamp formatter
+function formatDateTime(input: string) {
+  const d = new Date(input);
+  if (isNaN(d.getTime())) return "-";
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+    timeZoneName: "short",
+  });
+}
 
 export default function WithdrawPage() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -25,12 +50,12 @@ export default function WithdrawPage() {
   const [amount, setAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("eSewa");
   const [details, setDetails] = useState("");
-  const [qrPreview, setQrPreview] = useState<string | null>(null); // NEW: QR preview (from file or existing)
-  const [existingQrUrl, setExistingQrUrl] = useState<string | null>(null); // NEW: Existing QR from profile
+  const [qrPreview, setQrPreview] = useState<string | null>(null);
+  const [existingQrUrl, setExistingQrUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isQrUploading, setIsQrUploading] = useState(false); // NEW: For QR upload loading
+  const [isQrUploading, setIsQrUploading] = useState(false);
 
   useEffect(() => {
     const unsubscribeAuth = auth.onAuthStateChanged((currentUser) => {
@@ -40,17 +65,17 @@ export default function WithdrawPage() {
       }
       const userRef = dbRef(database, `users/${currentUser.uid}`);
       const historyRef = dbRef(database, "withdrawalRequests");
-      
+
       const unsubscribeUser = onValue(userRef, (snapshot) => {
         if (snapshot.exists()) {
           const userData = snapshot.val() as UserProfile;
           setUser(userData);
-          setExistingQrUrl(userData.withdrawalQrUrl || null); // NEW: Set existing QR
-          setQrPreview(userData.withdrawalQrUrl || null); // NEW: Set preview to existing
+          setExistingQrUrl(userData.withdrawalQrUrl || null);
+          setQrPreview(userData.withdrawalQrUrl || null);
         }
         setLoading(false);
       });
-      
+
       const unsubscribeHistory = onValue(historyRef, (snapshot) => {
         const data = (snapshot.val() as WithdrawalRequestsDb | null) ?? {};
         const userHistory: WithdrawalRequest[] = Object.entries(data)
@@ -59,7 +84,7 @@ export default function WithdrawPage() {
           .sort((a, b) => new Date(b.requestedAt).getTime() - new Date(a.requestedAt).getTime());
         setHistory(userHistory);
       });
-      
+
       return () => {
         unsubscribeUser();
         unsubscribeHistory();
@@ -68,7 +93,12 @@ export default function WithdrawPage() {
     return () => unsubscribeAuth();
   }, []);
 
-  const handleQrChange = async (e: ChangeEvent<HTMLInputElement>) => { // UPDATED: Upload immediately on change
+  // NEW: Sum of pending requests
+  const totalPendingAmount = history
+    .filter((r) => r.status === "Pending")
+    .reduce((sum, r) => sum + r.amount, 0);
+
+  const handleQrChange = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] || null;
     if (!file) return;
 
@@ -77,25 +107,22 @@ export default function WithdrawPage() {
 
     setIsQrUploading(true);
     try {
-      // Temporary preview
       const reader = new FileReader();
       reader.onloadend = () => setQrPreview(String(reader.result));
       reader.readAsDataURL(file);
 
-      // Upload to storage
       const qrStorageRef = storageRef(storage, `withdrawal-qrs/${currentUser.uid}/${Date.now()}`);
       const qrSnapshot = await uploadBytes(qrStorageRef, file);
       const qrUrl = await getDownloadURL(qrSnapshot.ref);
 
-      // Save to user profile
       await update(dbRef(database, `users/${currentUser.uid}`), { withdrawalQrUrl: qrUrl });
       setExistingQrUrl(qrUrl);
-      setQrPreview(qrUrl); // Update preview to uploaded URL
+      setQrPreview(qrUrl);
       alert("QR code uploaded and saved successfully!");
     } catch (error) {
       console.error("QR upload error:", error);
       alert("Failed to upload QR code. Please try again.");
-      setQrPreview(null); // Reset preview on error
+      setQrPreview(null);
     } finally {
       setIsQrUploading(false);
     }
@@ -109,7 +136,7 @@ export default function WithdrawPage() {
 
     const currentUser = auth.currentUser;
     const withdrawalAmount = Number(amount);
-    
+
     if (!currentUser || !user) {
       setError("User not found.");
       setIsSubmitting(false);
@@ -125,8 +152,8 @@ export default function WithdrawPage() {
       setIsSubmitting(false);
       return;
     }
-    if (withdrawalAmount > user.balance) {
-      setError("Amount exceeds available balance.");
+    if (withdrawalAmount + totalPendingAmount > user.balance) {
+      setError("Requested amount plus pending withdrawals exceeds your available balance.");
       setIsSubmitting(false);
       return;
     }
@@ -135,12 +162,12 @@ export default function WithdrawPage() {
       setIsSubmitting(false);
       return;
     }
-    if (!existingQrUrl) { // NEW: Require QR to be saved
+    if (!existingQrUrl) {
       setError("Please upload your QR code before submitting a withdrawal request.");
       setIsSubmitting(false);
       return;
     }
-    
+
     try {
       const withdrawalRef = push(dbRef(database, "withdrawalRequests"));
       await set(withdrawalRef, {
@@ -149,7 +176,7 @@ export default function WithdrawPage() {
         amount: withdrawalAmount,
         paymentMethod,
         details: details.trim(),
-        qrUrl: existingQrUrl, // NEW: Include saved QR URL
+        qrUrl: existingQrUrl,
         requestedAt: new Date().toISOString(),
         status: "Pending",
       });
@@ -167,6 +194,8 @@ export default function WithdrawPage() {
   if (!user) return <div className="p-8 text-center text-red-500">Could not load user data. Please log in again.</div>;
 
   const isKycApproved = user.kyc?.status === "Approved";
+  const requestedAmount = Number(amount) || 0;
+  const isRequestDisabled = isSubmitting || requestedAmount + totalPendingAmount > user.balance;
 
   return (
     <div>
@@ -176,14 +205,18 @@ export default function WithdrawPage() {
       </header>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        <div className="md:col-span-1 space-y-6"> {/* UPDATED: Space between balance and QR */}
+        <div className="md:col-span-1 space-y-6">
           <div className="rounded-lg border bg-white p-6 shadow-sm">
             <h3 className="text-sm font-medium text-slate-500">Available Balance</h3>
             <p className="mt-1 text-3xl font-bold text-slate-900">Rs {user.balance.toLocaleString()}</p>
+            {totalPendingAmount > 0 && (
+              <p className="mt-1 text-xs text-yellow-600">
+                Pending: Rs {totalPendingAmount.toLocaleString()}
+              </p>
+            )}
             <p className="mt-2 text-xs text-slate-400">Minimum withdrawal: Rs {MINIMUM_WITHDRAWAL_AMOUNT}</p>
           </div>
 
-          {/* UPDATED: QR Section Below Balance (Bigger Preview) */}
           <div className="rounded-lg border bg-white p-6 shadow-sm">
             <h3 className="text-sm font-medium text-slate-500 mb-2">Your Saved QR Code</h3>
             {existingQrUrl ? (
@@ -191,9 +224,9 @@ export default function WithdrawPage() {
                 <Image
                   src={existingQrUrl}
                   alt="Your QR Code"
-                  width={160} // Bigger: 160px base (responsive)
+                  width={160}
                   height={160}
-                  className="rounded-md shadow-inner max-w-full h-auto" // Responsive: Scales down on small screens
+                  className="rounded-md shadow-inner max-w-full h-auto"
                 />
               </div>
             ) : (
@@ -259,8 +292,9 @@ export default function WithdrawPage() {
               )}
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="w-full rounded-md bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:bg-sky-400"
+                disabled={isRequestDisabled}
+                title={isRequestDisabled && !isSubmitting ? "Amount plus pending requests exceeds balance" : undefined}
+                className="w-full rounded-md bg-sky-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 disabled:bg-sky-400 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? "Submitting..." : "Submit Request"}
               </button>
@@ -288,7 +322,10 @@ export default function WithdrawPage() {
                   <StatusBadge status={req.status} />
                 </div>
                 <div className="mt-4 border-t pt-2 text-xs text-slate-500 text-right">
-                  Requested on {new Date(req.requestedAt).toLocaleDateString()}
+                  Requested on{" "}
+                  <time dateTime={req.requestedAt} title={new Date(req.requestedAt).toISOString()}>
+                    {formatDateTime(req.requestedAt)}
+                  </time>
                 </div>
               </div>
             ))
@@ -300,7 +337,7 @@ export default function WithdrawPage() {
             <table className="min-w-full divide-y divide-slate-200">
               <thead className="bg-slate-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Date</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Date & Time</th>
                   <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Amount</th>
                   <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Method</th>
                   <th className="px-6 py-3 text-left text-xs font-medium uppercase text-slate-500">Status</th>
@@ -316,8 +353,10 @@ export default function WithdrawPage() {
                 ) : (
                   history.map((req) => (
                     <tr key={req.id}>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500">
-                        {new Date(req.requestedAt).toLocaleDateString()}
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
+                        <time dateTime={req.requestedAt} title={new Date(req.requestedAt).toISOString()}>
+                          {formatDateTime(req.requestedAt)}
+                        </time>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-800">
                         Rs {req.amount.toLocaleString()}

@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
           <p><a href="${resetUrl}" style="background-color: #0ea5e9; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Reset Password</a></p>
           <p>Click the link above to reset the password. You can also copy-paste it to share with the admin if needed.</p>
           <p><em>This link expires in 1 hour. If not used, it will be invalid.</em></p>
-          <p><em>Automated from Course Plex Admin Panel.</em></p>
+          <p><em>Automated from Plex Courses Admin Panel.</em></p>
         `,
       }),
     });

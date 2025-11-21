@@ -20,7 +20,7 @@ function buildFrom(fromName?: string, fromEmail?: string, envFrom?: string): str
 /**
  * Primary helper – uses cPanel's local sendmail (Exim).
  * Set env:
- *   MAIL_FROM="Course Plex <no-reply@courseplex.com.np>"
+ *   MAIL_FROM="Plex Courses <no-reply@PlexCourses.com.np>"
  *   SENDMAIL_PATH=/usr/sbin/sendmail
  *   MAIL_REPLY_TO=your@gmail.com (optional)
  */

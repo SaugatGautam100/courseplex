@@ -55,7 +55,7 @@ export default function AffiliatePage() {
       }
 
       setUid(currentUser.uid);
-      const baseUrl = "https://sajilointerior.com.np";
+      const baseUrl = "https://plexcourses.com";
       setAffiliateLink(`${baseUrl}/signup?ref=${currentUser.uid}`);
 
       // User + referrals
