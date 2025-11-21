@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, type FormEvent, type ChangeEvent } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+  type ChangeEvent,
+} from "react";
 import Image from "next/image";
 import { database, storage } from "@/lib/firebase";
 import {
@@ -11,12 +17,18 @@ import {
   update,
   remove,
 } from "firebase/database";
-import { ref as storageRef, uploadBytes, getDownloadURL } from "firebase/storage";
+import {
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL,
+  uploadBytesResumable,
+} from "firebase/storage";
 import type { SVGProps } from "react";
 
 /**
   ADMIN › COURSES
   - Manage Sub-courses (DB: courses)
+  - Manage Tutorials (DB: tutorials) with optional video upload
   - Manage Courses (DB: packages) with default commission percent (default 58%)
   - Manage Special Packages (admin-only) and assign to users
   - Select Featured Courses for Homepage (homepage/topPackageIds)
@@ -28,6 +40,9 @@ type Video = { title: string; url: string };
 type VideosMap = Record<string, Video>;
 type Course = { id: string; title: string; videos?: VideosMap }; // DB: courses (sub-courses)
 type CourseDB = Omit<Course, "id">;
+
+type Tutorial = { id: string; title: string; url: string; order?: number };
+type TutorialDB = Omit<Tutorial, "id">;
 
 type Package = {
   id: string;
@@ -63,6 +78,7 @@ type SpecialPackage = {
 type SpecialPackageDB = Omit<SpecialPackage, "id">;
 
 type CourseInput = { id?: string; title: string; videos: VideosMap };
+type TutorialInput = { id?: string; title: string; url: string; order: number };
 type PackageInput = {
   id?: string;
   name: string;
@@ -96,15 +112,109 @@ type SpecialPackageInput = {
 
 type ModalState =
   | { type: "course"; data: Course | null }
+  | { type: "tutorial"; data: Tutorial | null }
   | { type: "package"; data: Package | null }
   | { type: "special"; data: SpecialPackage | null }
   | { type: null; data: null };
 
 type UserLite = { id: string; name: string; email: string; imageUrl?: string };
 
+// =================== VIDEO UPLOADER (for Tutorials) ===================
+function VideoUploader({
+  onUploadComplete,
+}: {
+  onUploadComplete: (url: string) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith("video/")) {
+      setError("Please select a valid video file.");
+      return;
+    }
+
+    setUploading(true);
+    setProgress(0);
+    setError(null);
+
+    const fileRef = storageRef(storage, `videos/${Date.now()}_${file.name}`);
+    const uploadTask = uploadBytesResumable(fileRef, file, {
+      contentType: file.type,
+    });
+
+    uploadTask.on(
+      "state_changed",
+      (snapshot) => {
+        const prog = Math.round(
+          (snapshot.bytesTransferred / snapshot.totalBytes) * 100
+        );
+        setProgress(prog);
+      },
+      (err) => {
+        console.error("Upload error:", err);
+        setError("Upload failed. Please try again.");
+        setUploading(false);
+      },
+      () => {
+        getDownloadURL(uploadTask.snapshot.ref)
+          .then((url) => {
+            onUploadComplete(url);
+            setUploading(false);
+          })
+          .catch((err) => {
+            console.error("Download URL error:", err);
+            setError("Could not get download URL.");
+            setUploading(false);
+          });
+      }
+    );
+
+    e.target.value = "";
+  };
+
+  return (
+    <div className="rounded-lg border bg-slate-50 p-3">
+      <label
+        htmlFor="tutorial-video-upload"
+        className="mb-2 block text-sm font-medium text-slate-700"
+      >
+        Or upload a video file
+      </label>
+      <input
+        id="tutorial-video-upload"
+        type="file"
+        accept="video/*"
+        onChange={handleFileChange}
+        disabled={uploading}
+        className="text-sm text-slate-700 file:mr-4 file:rounded-md file:bg-white file:px-3 file:py-1.5 file:text-slate-700 hover:file:bg-slate-100 file:shadow-sm file:border file:border-slate-300"
+      />
+      {uploading && (
+        <div className="mt-2">
+          <p className="text-sm font-medium text-slate-600">
+            Uploading... {progress}%
+          </p>
+          <div className="mt-1 h-2 w-full rounded-full bg-slate-200">
+            <div
+              className="h-2 rounded-full bg-blue-600 transition-all"
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
 // =================== PAGE: Admin Courses & Packages ===================
 export default function AdminCoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
+  const [tutorials, setTutorials] = useState<Tutorial[]>([]);
   const [packages, setPackages] = useState<Package[]>([]);
   const [specialPackages, setSpecialPackages] = useState<SpecialPackage[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -112,21 +222,37 @@ export default function AdminCoursesPage() {
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
   // Homepage Featured Courses state
-  const [homeTopPkgMap, setHomeTopPkgMap] = useState<Record<string, boolean>>({});
-  const [homeTopPkgInitial, setHomeTopPkgInitial] = useState<Record<string, boolean>>({});
+  const [homeTopPkgMap, setHomeTopPkgMap] = useState<Record<string, boolean>>(
+    {}
+  );
+  const [homeTopPkgInitial, setHomeTopPkgInitial] = useState<
+    Record<string, boolean>
+  >({});
   const [savingTop, setSavingTop] = useState<boolean>(false);
   const [topQuery, setTopQuery] = useState<string>("");
 
   useEffect(() => {
     const coursesRef = dbRef(database, "courses/");
+    const tutorialsRef = dbRef(database, "tutorials/");
     const packagesRef = dbRef(database, "packages/");
     const specialsRef = dbRef(database, "specialPackages/");
     const topPackagesRef = dbRef(database, "homepage/topPackageIds");
 
     const unsubCourses = onValue(coursesRef, (snapshot) => {
       const val = (snapshot.val() || {}) as Record<string, CourseDB>;
-      const list: Course[] = Object.entries(val).map(([id, data]) => ({ id, ...data }));
+      const list: Course[] = Object.entries(val).map(([id, data]) => ({
+        id,
+        ...data,
+      }));
       setCourses(list);
+    });
+
+    const unsubTutorials = onValue(tutorialsRef, (snapshot) => {
+      const val = (snapshot.val() || {}) as Record<string, TutorialDB>;
+      const list: Tutorial[] = Object.entries(val)
+        .map(([id, data]) => ({ id, ...data }))
+        .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+      setTutorials(list);
     });
 
     const unsubPackages = onValue(packagesRef, (snapshot) => {
@@ -139,13 +265,18 @@ export default function AdminCoursesPage() {
         courseIds: data.courseIds,
         highlight: data.highlight,
         badge: data.badge,
-        commissionPercent: typeof data.commissionPercent === "number" ? data.commissionPercent : 58,
+        commissionPercent:
+          typeof data.commissionPercent === "number"
+            ? data.commissionPercent
+            : 58,
         discountActive: Boolean(data.discountActive),
-        discountPercent: typeof data.discountPercent === "number" ? data.discountPercent : 0,
+        discountPercent:
+          typeof data.discountPercent === "number" ? data.discountPercent : 0,
         discountLabel: data.discountLabel || "",
         showRating: Boolean(data.showRating),
         rating: typeof data.rating === "number" ? data.rating : 0,
-        ratingCount: typeof data.ratingCount === "number" ? data.ratingCount : 0,
+        ratingCount:
+          typeof data.ratingCount === "number" ? data.ratingCount : 0,
       }));
       setPackages(list);
       setLoading(false);
@@ -153,18 +284,22 @@ export default function AdminCoursesPage() {
 
     const unsubSpecials = onValue(specialsRef, (snapshot) => {
       const val = (snapshot.val() || {}) as Record<string, SpecialPackageDB>;
-      const list: SpecialPackage[] = Object.entries(val).map(([id, data]) => ({ id, ...data }));
+      const list: SpecialPackage[] = Object.entries(val).map(([id, data]) => ({
+        id,
+        ...data,
+      }));
       setSpecialPackages(list);
     });
 
     const unsubTop = onValue(topPackagesRef, (snapshot) => {
       const val = (snapshot.val() || {}) as Record<string, boolean>;
-      setHomeTopPkgMap(val);
-      setHomeTopPkgInitial(val);
+      setHomeTopPkgMap(val || {});
+      setHomeTopPkgInitial(val || {});
     });
 
     return () => {
       unsubCourses();
+      unsubTutorials();
       unsubPackages();
       unsubSpecials();
       unsubTop();
@@ -191,8 +326,46 @@ export default function AdminCoursesPage() {
   };
 
   const handleDeleteCourse = async (id: string) => {
-    if (window.confirm("Delete this sub-course? This will remove it from all courses (bundles).")) {
+    if (
+      window.confirm(
+        "Delete this sub-course? This will remove it from all courses (bundles)."
+      )
+    ) {
       await remove(dbRef(database, `courses/${id}`));
+    }
+  };
+
+  // --- TUTORIALS ---
+  const handleSaveTutorial = async (formData: TutorialInput) => {
+    setIsSaving(true);
+    try {
+      const { id, ...data } = formData;
+      const toWrite = {
+        title: data.title,
+        url: data.url,
+        order: Number(data.order) || 0,
+      };
+      if (id) {
+        await update(dbRef(database, `tutorials/${id}`), toWrite);
+      } else {
+        await push(dbRef(database, "tutorials"), toWrite);
+      }
+      setModal({ type: null, data: null });
+    } catch (e) {
+      console.error(e);
+      alert("Failed to save tutorial.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDeleteTutorial = async (id: string) => {
+    if (!window.confirm("Delete this tutorial?")) return;
+    try {
+      await remove(dbRef(database, `tutorials/${id}`));
+    } catch (e) {
+      console.error(e);
+      alert("Failed to delete tutorial.");
     }
   };
 
@@ -212,7 +385,9 @@ export default function AdminCoursesPage() {
   );
 
   const isHomeTopDirty = useMemo(
-    () => JSON.stringify(homeTopPkgMap || {}) !== JSON.stringify(homeTopPkgInitial || {}),
+    () =>
+      JSON.stringify(homeTopPkgMap || {}) !==
+      JSON.stringify(homeTopPkgInitial || {}),
     [homeTopPkgMap, homeTopPkgInitial]
   );
 
@@ -249,12 +424,18 @@ export default function AdminCoursesPage() {
   const clearAllTop = () => setHomeTopPkgMap({});
 
   // --- PUBLIC COURSES (packages) ---
-  const handleSavePackage = async (formData: PackageInput, imageFile: File | null) => {
+  const handleSavePackage = async (
+    formData: PackageInput,
+    imageFile: File | null
+  ) => {
     setIsSaving(true);
     try {
       let finalImageUrl = formData.imageUrl;
       if (imageFile) {
-        const fileRef = storageRef(storage, `package-images/${Date.now()}_${imageFile.name}`);
+        const fileRef = storageRef(
+          storage,
+          `package-images/${Date.now()}_${imageFile.name}`
+        );
         const snapshot = await uploadBytes(fileRef, imageFile);
         finalImageUrl = await getDownloadURL(snapshot.ref);
       }
@@ -271,15 +452,24 @@ export default function AdminCoursesPage() {
         courseIds: formData.courseIds || {},
         highlight: Boolean(formData.highlight),
         badge: formData.badge || "",
-        commissionPercent: Math.max(0, Math.min(100, Number(formData.commissionPercent) || 58)),
+        commissionPercent: Math.max(
+          0,
+          Math.min(100, Number(formData.commissionPercent) || 58)
+        ),
 
         discountActive: Boolean(formData.discountActive),
-        discountPercent: Math.max(0, Math.min(100, Number(formData.discountPercent) || 0)),
+        discountPercent: Math.max(
+          0,
+          Math.min(100, Number(formData.discountPercent) || 0)
+        ),
         discountLabel: (formData.discountLabel || "").trim(),
 
         showRating: Boolean(formData.showRating),
         rating: Math.max(0, Math.min(5, Number(formData.rating) || 0)),
-        ratingCount: Math.max(0, Math.floor(Number(formData.ratingCount) || 0)),
+        ratingCount: Math.max(
+          0,
+          Math.floor(Number(formData.ratingCount) || 0)
+        ),
       };
 
       if (formData.id) {
@@ -303,12 +493,18 @@ export default function AdminCoursesPage() {
   };
 
   // --- SPECIAL PACKAGES ---
-  const handleSaveSpecialPackage = async (formData: SpecialPackageInput, imageFile: File | null) => {
+  const handleSaveSpecialPackage = async (
+    formData: SpecialPackageInput,
+    imageFile: File | null
+  ) => {
     setIsSaving(true);
     try {
       let finalImageUrl = formData.imageUrl;
       if (imageFile) {
-        const fileRef = storageRef(storage, `package-images/${Date.now()}_${imageFile.name}`);
+        const fileRef = storageRef(
+          storage,
+          `package-images/${Date.now()}_${imageFile.name}`
+        );
         const snapshot = await uploadBytes(fileRef, imageFile);
         finalImageUrl = await getDownloadURL(snapshot.ref);
       }
@@ -322,7 +518,10 @@ export default function AdminCoursesPage() {
         name: formData.name,
         price: Number(formData.price) || 0,
         imageUrl: finalImageUrl,
-        commissionPercent: Math.max(0, Math.min(100, Number(formData.commissionPercent) || 58)),
+        commissionPercent: Math.max(
+          0,
+          Math.min(100, Number(formData.commissionPercent) || 58)
+        ),
         assignedUserIds: formData.assignedUserIds || {},
         note: formData.note || "",
       };
@@ -339,7 +538,8 @@ export default function AdminCoursesPage() {
       if (!spId) throw new Error("Failed to resolve special package ID.");
 
       // Diff assign/revoke users
-      const prev = specialPackages.find((p) => p.id === spId)?.assignedUserIds || {};
+      const prev =
+        specialPackages.find((p) => p.id === spId)?.assignedUserIds || {};
       const next = formData.assignedUserIds || {};
       const toAssign = Object.keys(next).filter((uid) => !prev[uid]);
       const toRevoke = Object.keys(prev).filter((uid) => !next[uid]);
@@ -368,7 +568,6 @@ export default function AdminCoursesPage() {
     }
   };
 
-  // FIX: missing delete function
   const handleDeleteSpecialPackage = async (id: string) => {
     if (!id) return;
     if (!window.confirm("Delete this special package?")) return;
@@ -394,16 +593,22 @@ export default function AdminCoursesPage() {
   return (
     <div className="p-4 sm:p-6 lg:p-8">
       <header className="mb-8">
-        <h2 className="text-3xl font-bold text-slate-900">Sub-courses & Courses</h2>
+        <h2 className="text-3xl font-bold text-slate-900">
+          Sub-courses, Tutorials & Courses
+        </h2>
         <p className="mt-1 text-base text-slate-500">
-          Manage reusable sub-courses, public courses (bundles with default commission%), special packages (admin-only), choose Featured Courses, set discounts, and control review stars.
+          Manage reusable sub-courses, platform tutorials, public courses
+          (bundles), special packages (admin-only), choose Featured Courses,
+          set discounts, and control review stars.
         </p>
       </header>
 
       {/* Sub-course Library */}
       <div className="mb-10">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-xl font-semibold text-slate-800">Sub-course Library</h3>
+          <h3 className="text-xl font-semibold text-slate-800">
+            Sub-course Library
+          </h3>
           <button
             onClick={() => setModal({ type: "course", data: null })}
             className="flex items-center gap-2 rounded-lg bg-slate-700 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
@@ -425,7 +630,10 @@ export default function AdminCoursesPage() {
               <tbody className="divide-y divide-slate-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={3} className="p-8 text-center text-slate-500">
+                    <td
+                      colSpan={3}
+                      className="p-8 text-center text-slate-500"
+                    >
                       Loading Sub-courses...
                     </td>
                   </tr>
@@ -433,10 +641,14 @@ export default function AdminCoursesPage() {
                   courses.map((course) => (
                     <tr key={course.id}>
                       <td className="px-6 py-4 font-medium">{course.title}</td>
-                      <td className="px-6 py-4">{Object.keys(course.videos || {}).length}</td>
+                      <td className="px-6 py-4">
+                        {Object.keys(course.videos || {}).length}
+                      </td>
                       <td className="space-x-4 px-6 py-4 text-right">
                         <button
-                          onClick={() => setModal({ type: "course", data: course })}
+                          onClick={() =>
+                            setModal({ type: "course", data: course })
+                          }
                           className="text-sky-600 hover:text-sky-800"
                         >
                           Edit
@@ -457,13 +669,94 @@ export default function AdminCoursesPage() {
         </div>
       </div>
 
+      {/* Platform Tutorials */}
+      <div className="mb-10">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-xl font-semibold text-slate-800">
+            Platform Tutorials
+          </h3>
+          <button
+            onClick={() => setModal({ type: "tutorial", data: null })}
+            className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            <PlusIcon />
+            New Tutorial
+          </button>
+        </div>
+        <div className="overflow-hidden rounded-lg border bg-white shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left">
+              <thead className="border-b bg-slate-50">
+                <tr className="text-xs font-medium uppercase text-slate-500">
+                  <th className="px-6 py-3">Tutorial Title</th>
+                  <th className="px-6 py-3">Order</th>
+                  <th className="px-6 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {loading ? (
+                  <tr>
+                    <td
+                      colSpan={3}
+                      className="p-8 text-center text-slate-500"
+                    >
+                      Loading Tutorials...
+                    </td>
+                  </tr>
+                ) : tutorials.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={3}
+                      className="p-6 text-center text-slate-500"
+                    >
+                      No tutorials added yet.
+                    </td>
+                  </tr>
+                ) : (
+                  tutorials.map((t) => (
+                    <tr key={t.id}>
+                      <td className="px-6 py-4 font-medium">{t.title}</td>
+                      <td className="px-6 py-4 font-mono">{t.order ?? 0}</td>
+                      <td className="px-6 py-4 text-right space-x-4">
+                        <button
+                          onClick={() =>
+                            setModal({ type: "tutorial", data: t })
+                          }
+                          className="text-indigo-600 hover:text-indigo-800"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => handleDeleteTutorial(t.id)}
+                          className="text-red-600 hover:text-red-800"
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <p className="mt-2 text-xs text-slate-500">
+          These videos appear on the user-facing Tutorials page. Use the{" "}
+          <span className="font-semibold">Order</span> field to control sort
+          order (lower appears first).
+        </p>
+      </div>
+
       {/* Homepage Featured Courses */}
       <div className="mb-12">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h3 className="text-xl font-semibold text-slate-800">Homepage: Featured Courses</h3>
+            <h3 className="text-xl font-semibold text-slate-800">
+              Homepage: Featured Courses
+            </h3>
             <p className="text-sm text-slate-500">
-              Select which Courses (bundles) appear on the homepage. Saved to homepage/topPackageIds.
+              Select which Courses (bundles) appear on the homepage. Saved to{" "}
+              <code className="font-mono">homepage/topPackageIds</code>.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -502,7 +795,10 @@ export default function AdminCoursesPage() {
             />
           </div>
           <div className="hidden text-sm text-slate-500 sm:block">
-            Selected: <span className="font-semibold text-slate-700">{selectedTopCount}</span>
+            Selected:{" "}
+            <span className="font-semibold text-slate-700">
+              {selectedTopCount}
+            </span>
           </div>
         </div>
 
@@ -526,7 +822,11 @@ export default function AdminCoursesPage() {
                       ? "border-indigo-300 bg-indigo-50/60 ring-2 ring-indigo-500/60"
                       : "border-slate-200 hover:bg-slate-50",
                   ].join(" ")}
-                  title={selected ? "Click to remove from Featured" : "Click to feature on home"}
+                  title={
+                    selected
+                      ? "Click to remove from Featured"
+                      : "Click to feature on home"
+                  }
                 >
                   <Image
                     src={pkg.imageUrl || "/default-avatar.png"}
@@ -536,10 +836,14 @@ export default function AdminCoursesPage() {
                     className="h-10 w-14 rounded object-cover bg-slate-100"
                   />
                   <div className="flex-1">
-                    <div className="line-clamp-1 text-sm font-semibold text-slate-800">{pkg.name}</div>
+                    <div className="line-clamp-1 text-sm font-semibold text-slate-800">
+                      {pkg.name}
+                    </div>
                     <div className="text-xs text-slate-500">
-                      {Object.keys(pkg.courseIds || {}).length} sub-courses • Rs {Number(finalPrice || 0).toLocaleString()}
-                      {pkg.discountActive && (pkg.discountPercent || 0) > 0 ? (
+                      {Object.keys(pkg.courseIds || {}).length} sub-courses •
+                      Rs {Number(finalPrice || 0).toLocaleString()}
+                      {pkg.discountActive &&
+                      (pkg.discountPercent || 0) > 0 ? (
                         <span className="ml-2 inline-flex items-center rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
                           -{Number(pkg.discountPercent || 0).toFixed(0)}%
                         </span>
@@ -554,7 +858,9 @@ export default function AdminCoursesPage() {
                         : "bg-slate-100 text-slate-600 ring-1 ring-slate-200",
                     ].join(" ")}
                   >
-                    {selected ? <CheckIcon className="h-4 w-4 text-emerald-600" /> : null}
+                    {selected ? (
+                      <CheckIcon className="h-4 w-4 text-emerald-600" />
+                    ) : null}
                     {selected ? "Featured" : "Feature"}
                   </div>
                 </button>
@@ -564,14 +870,19 @@ export default function AdminCoursesPage() {
         </div>
 
         <div className="mt-3 text-sm text-slate-500 sm:hidden">
-          Selected: <span className="font-semibold text-slate-700">{selectedTopCount}</span>
+          Selected:{" "}
+          <span className="font-semibold text-slate-700">
+            {selectedTopCount}
+          </span>
         </div>
       </div>
 
       {/* Public Courses */}
       <div className="mb-12">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-xl font-semibold text-slate-800">Public Courses (Default Commission)</h3>
+          <h3 className="text-xl font-semibold text-slate-800">
+            Public Courses (Default Commission)
+          </h3>
           <button
             onClick={() => setModal({ type: "package", data: null })}
             className="flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700"
@@ -597,7 +908,10 @@ export default function AdminCoursesPage() {
               <tbody className="divide-y divide-slate-200">
                 {loading ? (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-slate-500">
+                    <td
+                      colSpan={7}
+                      className="p-8 text-center text-slate-500"
+                    >
                       Loading Courses...
                     </td>
                   </tr>
@@ -616,12 +930,16 @@ export default function AdminCoursesPage() {
                           />
                           {pkg.name}
                         </td>
-                        <td className="px-6 py-4">{Object.keys(pkg.courseIds || {}).length}</td>
+                        <td className="px-6 py-4">
+                          {Object.keys(pkg.courseIds || {}).length}
+                        </td>
                         <td className="px-6 py-4 font-mono">
-                          {pkg.discountActive && (pkg.discountPercent || 0) > 0 ? (
+                          {pkg.discountActive &&
+                          (pkg.discountPercent || 0) > 0 ? (
                             <div>
                               <div className="text-slate-400 line-through">
-                                Rs {Number(pkg.price || 0).toLocaleString()}
+                                Rs{" "}
+                                {Number(pkg.price || 0).toLocaleString()}
                               </div>
                               <div className="font-semibold text-emerald-700">
                                 Rs {Number(finalPrice || 0).toLocaleString()}
@@ -631,9 +949,12 @@ export default function AdminCoursesPage() {
                             <>Rs {Number(pkg.price || 0).toLocaleString()}</>
                           )}
                         </td>
-                        <td className="px-6 py-4">{(pkg.commissionPercent ?? 58).toFixed(0)}%</td>
                         <td className="px-6 py-4">
-                          {pkg.discountActive && (pkg.discountPercent || 0) > 0 ? (
+                          {(pkg.commissionPercent ?? 58).toFixed(0)}%
+                        </td>
+                        <td className="px-6 py-4">
+                          {pkg.discountActive &&
+                          (pkg.discountPercent || 0) > 0 ? (
                             <div className="text-emerald-700 font-semibold">
                               -{Number(pkg.discountPercent || 0).toFixed(0)}%
                               {pkg.discountLabel ? (
@@ -650,8 +971,11 @@ export default function AdminCoursesPage() {
                           {pkg.showRating ? (
                             <span className="font-medium text-slate-800">
                               {Number(pkg.rating || 0).toFixed(1)} / 5
-                              {typeof pkg.ratingCount === "number" && pkg.ratingCount > 0 ? (
-                                <span className="ml-1 text-xs text-slate-500">({pkg.ratingCount})</span>
+                              {typeof pkg.ratingCount === "number" &&
+                              pkg.ratingCount > 0 ? (
+                                <span className="ml-1 text-xs text-slate-500">
+                                  ({pkg.ratingCount})
+                                </span>
                               ) : null}
                             </span>
                           ) : (
@@ -660,7 +984,9 @@ export default function AdminCoursesPage() {
                         </td>
                         <td className="space-x-4 px-6 py-4 text-right">
                           <button
-                            onClick={() => setModal({ type: "package", data: pkg })}
+                            onClick={() =>
+                              setModal({ type: "package", data: pkg })
+                            }
                             className="text-sky-600 hover:text-sky-800"
                           >
                             Edit
@@ -688,7 +1014,9 @@ export default function AdminCoursesPage() {
       {/* Special Packages (Admin-only) */}
       <div>
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-xl font-semibold text-slate-800">Special Packages (Admin-only)</h3>
+          <h3 className="text-xl font-semibold text-slate-800">
+            Special Packages (Admin-only)
+          </h3>
           <button
             onClick={() => setModal({ type: "special", data: null })}
             className="flex items-center gap-2 rounded-lg bg-fuchsia-600 px-4 py-2 text-sm font-medium text-white hover:bg-fuchsia-700"
@@ -712,7 +1040,10 @@ export default function AdminCoursesPage() {
               <tbody className="divide-y divide-slate-200">
                 {specialPackages.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-6 text-center text-slate-500">
+                    <td
+                      colSpan={5}
+                      className="p-6 text-center text-slate-500"
+                    >
                       No special packages yet.
                     </td>
                   </tr>
@@ -732,13 +1063,17 @@ export default function AdminCoursesPage() {
                       <td className="px-6 py-4 font-mono">
                         Rs {(sp.price || 0).toLocaleString()}
                       </td>
-                      <td className="px-6 py-4">{(sp.commissionPercent || 0).toFixed(0)}%</td>
+                      <td className="px-6 py-4">
+                        {(sp.commissionPercent || 0).toFixed(0)}%
+                      </td>
                       <td className="px-6 py-4">
                         {Object.keys(sp.assignedUserIds || {}).length}
                       </td>
                       <td className="space-x-3 px-6 py-4 text-right">
                         <button
-                          onClick={() => setModal({ type: "special", data: sp })}
+                          onClick={() =>
+                            setModal({ type: "special", data: sp })
+                          }
                           className="text-fuchsia-600 hover:text-fuchsia-800 text-sm"
                         >
                           Edit / Assign
@@ -758,7 +1093,8 @@ export default function AdminCoursesPage() {
           </div>
         </div>
         <p className="mt-2 text-xs text-slate-500">
-          Assign users here, then click Save Special Package to apply. Changes aren’t granted until you save.
+          Assign users here, then click <strong>Save Special Package</strong> in
+          the modal to apply changes.
         </p>
       </div>
 
@@ -768,6 +1104,14 @@ export default function AdminCoursesPage() {
           course={modal.data as Course | null}
           onClose={() => setModal({ type: null, data: null })}
           onSave={handleSaveCourse}
+          isSaving={isSaving}
+        />
+      )}
+      {modal.type === "tutorial" && (
+        <TutorialFormModal
+          tutorial={modal.data as Tutorial | null}
+          onClose={() => setModal({ type: null, data: null })}
+          onSave={handleSaveTutorial}
           isSaving={isSaving}
         />
       )}
@@ -809,7 +1153,10 @@ function CourseFormModal({
     title: course?.title || "",
     videos: course?.videos || {},
   });
-  const [newVideo, setNewVideo] = useState<{ title: string; url: string }>({ title: "", url: "" });
+  const [newVideo, setNewVideo] = useState<{ title: string; url: string }>({
+    title: "",
+    url: "",
+  });
   const [videoError, setVideoError] = useState<string>("");
   const [fetchingTitle, setFetchingTitle] = useState<boolean>(false);
 
@@ -834,7 +1181,9 @@ function CourseFormModal({
       if (embedIdx >= 0 && parts[embedIdx + 1]) return parts[embedIdx + 1];
       return null;
     } catch {
-      const m = url.match(/(?:v=|\/shorts\/|youtu\.be\/|\/embed\/)([A-Za-z0-9_-]{6,})/);
+      const m = url.match(
+        /(?:v=|\/shorts\/|youtu\.be\/|\/embed\/)([A-Za-z0-9_-]{6,})/
+      );
       return m?.[1] || null;
     }
   };
@@ -853,7 +1202,9 @@ function CourseFormModal({
 
   const fetchVideoTitle = async (videoId: string): Promise<string | null> => {
     try {
-      const res = await fetch(`/api/youtube/video?id=${encodeURIComponent(videoId)}`);
+      const res = await fetch(
+        `/api/youtube/video?id=${encodeURIComponent(videoId)}`
+      );
       if (!res.ok) return null;
       const data = await res.json();
       return data?.title || null;
@@ -865,6 +1216,7 @@ function CourseFormModal({
   const handleUrlBlur = async () => {
     setVideoError("");
     if (newVideo.title.trim()) return;
+    if (!newVideo.url.trim()) return;
     const vid = extractVideoId(newVideo.url);
     if (!vid) {
       setVideoError("Please enter a valid YouTube video URL.");
@@ -906,7 +1258,13 @@ function CourseFormModal({
     const newKey = `video_${Date.now()}`;
     setFormData((prev) => ({
       ...prev,
-      videos: { ...prev.videos, [newKey]: { title, url: `https://www.youtube.com/watch?v=${vid}` } },
+      videos: {
+        ...prev.videos,
+        [newKey]: {
+          title,
+          url: `https://www.youtube.com/watch?v=${vid}`,
+        },
+      },
     }));
     setNewVideo({ title: "", url: "" });
   };
@@ -921,17 +1279,25 @@ function CourseFormModal({
     setPlaylistMsg("");
     const pid = extractPlaylistId(playlistUrl);
     if (!pid) {
-      setPlaylistError("Please paste a valid playlist (or watch URL containing list=...)");
+      setPlaylistError(
+        "Please paste a valid playlist (or watch URL containing list=...)"
+      );
       return;
     }
     setImportingPlaylist(true);
     try {
-      const res = await fetch(`/api/youtube/playlist?playlistId=${encodeURIComponent(pid)}&limit=200`);
+      const res = await fetch(
+        `/api/youtube/playlist?playlistId=${encodeURIComponent(
+          pid
+        )}&limit=200`
+      );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err?.error || "Failed to fetch playlist items");
       }
-      const data = (await res.json()) as { items: { title: string; videoId: string }[] };
+      const data = (await res.json()) as {
+        items: { title: string; videoId: string }[];
+      };
       const existingIds = new Set<string>(
         Object.values(formData.videos || {})
           .map((v) => extractVideoId(v.url))
@@ -956,10 +1322,21 @@ function CourseFormModal({
       }
 
       if (added === 0) {
-        setPlaylistMsg(`No new videos imported. ${skipped > 0 ? `${skipped} duplicates skipped.` : ""}`);
+        setPlaylistMsg(
+          `No new videos imported. ${
+            skipped > 0 ? `${skipped} duplicates skipped.` : ""
+          }`
+        );
       } else {
-        setFormData((prev) => ({ ...prev, videos: { ...(prev.videos || {}), ...toAdd } }));
-        setPlaylistMsg(`Imported ${added} videos ${skipped ? `(skipped ${skipped} duplicates)` : ""}.`);
+        setFormData((prev) => ({
+          ...prev,
+          videos: { ...(prev.videos || {}), ...toAdd },
+        }));
+        setPlaylistMsg(
+          `Imported ${added} videos ${
+            skipped ? `(skipped ${skipped} duplicates)` : ""
+          }.`
+        );
       }
     } catch (e: any) {
       setPlaylistError(e?.message || "Failed to import playlist.");
@@ -976,22 +1353,33 @@ function CourseFormModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
       <div className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
-        <h3 className="text-xl font-semibold">{course ? "Edit Sub-course" : "Create New Sub-course"}</h3>
+        <h3 className="text-xl font-semibold">
+          {course ? "Edit Sub-course" : "Create New Sub-course"}
+        </h3>
         <form onSubmit={handleSubmit} className="mt-4 space-y-6">
           <InputField
             label="Sub-course Title"
             id="title"
             value={formData.title}
             onChange={(e) =>
-              setFormData({ ...formData, title: (e.currentTarget as HTMLInputElement).value })
+              setFormData({
+                ...formData,
+                title: (e.currentTarget as HTMLInputElement).value,
+              })
             }
             required
           />
           <div className="space-y-4 rounded-md border p-4">
             <h4 className="font-semibold">Videos</h4>
             {Object.entries(formData.videos).map(([videoId, video]) => (
-              <div key={videoId} className="flex items-center justify-between rounded bg-slate-50 p-2 text-sm">
-                <span className="font-medium text-slate-700 line-clamp-1" title={video.title}>
+              <div
+                key={videoId}
+                className="flex items-center justify-between rounded bg-slate-50 p-2 text-sm"
+              >
+                <span
+                  className="font-medium text-slate-700 line-clamp-1"
+                  title={video.title}
+                >
                   {video.title}
                 </span>
                 <div className="flex items-center gap-3">
@@ -1020,7 +1408,12 @@ function CourseFormModal({
                   label="YouTube Video URL"
                   id="newVidUrl"
                   value={newVideo.url}
-                  onChange={(e) => setNewVideo({ ...newVideo, url: (e.currentTarget as HTMLInputElement).value })}
+                  onChange={(e) =>
+                    setNewVideo({
+                      ...newVideo,
+                      url: (e.currentTarget as HTMLInputElement).value,
+                    })
+                  }
                   onBlur={handleUrlBlur}
                   placeholder="https://www.youtube.com/watch?v=..."
                 />
@@ -1028,7 +1421,12 @@ function CourseFormModal({
                   label={`Video Title ${fetchingTitle ? "(Fetching...)" : ""}`}
                   id="newVidTitle"
                   value={newVideo.title}
-                  onChange={(e) => setNewVideo({ ...newVideo, title: (e.currentTarget as HTMLInputElement).value })}
+                  onChange={(e) =>
+                    setNewVideo({
+                      ...newVideo,
+                      title: (e.currentTarget as HTMLInputElement).value,
+                    })
+                  }
                   placeholder="Auto-filled from YouTube (or type)"
                 />
               </div>
@@ -1040,18 +1438,24 @@ function CourseFormModal({
                 >
                   Add Video
                 </button>
-                {videoError && <span className="text-xs text-red-500">{videoError}</span>}
+                {videoError && (
+                  <span className="text-xs text-red-500">{videoError}</span>
+                )}
               </div>
             </div>
 
             {/* Playlist import */}
             <div className="border-t pt-4">
-              <h5 className="mb-1 text-sm font-semibold text-slate-700">Import YouTube Playlist</h5>
+              <h5 className="mb-1 text-sm font-semibold text-slate-700">
+                Import YouTube Playlist
+              </h5>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <input
                   type="text"
                   value={playlistUrl}
-                  onChange={(e) => setPlaylistUrl(e.currentTarget.value)}
+                  onChange={(e) =>
+                    setPlaylistUrl(e.currentTarget.value)
+                  }
                   placeholder="https://www.youtube.com/playlist?list=... (or a watch URL with list=...)"
                   className="flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm placeholder-slate-500 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                 />
@@ -1065,11 +1469,20 @@ function CourseFormModal({
                 </button>
               </div>
               <div className="mt-2 text-xs">
-                {playlistMsg ? <span className="font-medium text-emerald-600">{playlistMsg}</span> : null}
-                {playlistError ? <span className="font-medium text-red-600">{playlistError}</span> : null}
+                {playlistMsg ? (
+                  <span className="font-medium text-emerald-600">
+                    {playlistMsg}
+                  </span>
+                ) : null}
+                {playlistError ? (
+                  <span className="font-medium text-red-600">
+                    {playlistError}
+                  </span>
+                ) : null}
               </div>
               <p className="mt-1 text-xs text-slate-500">
-                We’ll pull titles and links for up to 200 items. Duplicates are skipped.
+                We’ll pull titles and links for up to 200 items. Duplicates are
+                skipped.
               </p>
             </div>
           </div>
@@ -1087,6 +1500,109 @@ function CourseFormModal({
               className="rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:bg-green-400"
             >
               {isSaving ? "Saving..." : "Save Sub-course"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ================== MODAL FOR TUTORIALS ==================
+function TutorialFormModal({
+  tutorial,
+  onClose,
+  onSave,
+  isSaving,
+}: {
+  tutorial: Tutorial | null;
+  onClose: () => void;
+  onSave: (data: TutorialInput) => void;
+  isSaving: boolean;
+}) {
+  const [formData, setFormData] = useState<TutorialInput>({
+    id: tutorial?.id,
+    title: tutorial?.title || "",
+    url: tutorial?.url || "",
+    order: tutorial?.order ?? 0,
+  });
+
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    onSave(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
+      <div className="relative w-full max-w-xl rounded-lg bg-white p-6 shadow-xl">
+        <h3 className="text-xl font-semibold">
+          {tutorial ? "Edit Tutorial" : "Create New Tutorial"}
+        </h3>
+        <form onSubmit={handleSubmit} className="mt-4 space-y-6">
+          <InputField
+            label="Tutorial Title"
+            id="tut-title"
+            value={formData.title}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                title: (e.currentTarget as HTMLInputElement).value,
+              })
+            }
+            required
+          />
+          <div>
+            <InputField
+              label="Video URL"
+              id="tut-url"
+              value={formData.url}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  url: (e.currentTarget as HTMLInputElement).value,
+                })
+              }
+              required
+              placeholder="Paste YouTube URL or upload below"
+            />
+            <div className="mt-4">
+              <VideoUploader
+                onUploadComplete={(url) =>
+                  setFormData((prev) => ({ ...prev, url }))
+                }
+              />
+            </div>
+          </div>
+          <InputField
+            label="Order"
+            id="tut-order"
+            type="number"
+            value={formData.order}
+            onChange={(e) =>
+              setFormData({
+                ...formData,
+                order: Number(e.currentTarget.value) || 0,
+              })
+            }
+            placeholder="0"
+          />
+          <p className="text-xs text-slate-500">
+            Tutorials are sorted by order (ascending).
+          </p>
+          <div className="mt-6 flex justify-end gap-3 border-t pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md bg-slate-100 px-4 py-2 text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={isSaving}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {isSaving ? "Saving..." : "Save Tutorial"}
             </button>
           </div>
         </form>
@@ -1117,18 +1633,27 @@ function PackageFormModal({
     courseIds: pkg?.courseIds || {},
     highlight: pkg?.highlight || false,
     badge: pkg?.badge || "",
-    commissionPercent: typeof pkg?.commissionPercent === "number" ? pkg!.commissionPercent! : 58,
+    commissionPercent:
+      typeof pkg?.commissionPercent === "number"
+        ? pkg!.commissionPercent!
+        : 58,
 
     discountActive: Boolean(pkg?.discountActive) || false,
-    discountPercent: typeof pkg?.discountPercent === "number" ? pkg!.discountPercent! : 0,
+    discountPercent:
+      typeof pkg?.discountPercent === "number"
+        ? pkg!.discountPercent!
+        : 0,
     discountLabel: pkg?.discountLabel || "",
 
     showRating: Boolean(pkg?.showRating) || false,
     rating: typeof pkg?.rating === "number" ? pkg!.rating! : 0,
-    ratingCount: typeof pkg?.ratingCount === "number" ? pkg!.ratingCount! : 0,
+    ratingCount:
+      typeof pkg?.ratingCount === "number" ? pkg!.ratingCount! : 0,
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(pkg?.imageUrl || null);
+  const [imagePreview, setImagePreview] = useState<string | null>(
+    pkg?.imageUrl || null
+  );
 
   const handleImageChange = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.currentTarget.files?.[0];
@@ -1145,7 +1670,9 @@ function PackageFormModal({
     setImageFile(null);
     setImagePreview(null);
     setFormData((prev) => ({ ...prev, imageUrl: "" }));
-    const fileInput = document.getElementById("image-upload") as HTMLInputElement | null;
+    const fileInput = document.getElementById(
+      "image-upload"
+    ) as HTMLInputElement | null;
     if (fileInput) fileInput.value = "";
   };
   const handleToggleCourse = (courseId: string) => {
@@ -1173,7 +1700,9 @@ function PackageFormModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
       <div className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
-        <h3 className="text-xl font-semibold">{pkg ? "Edit Course" : "Create New Course"}</h3>
+        <h3 className="text-xl font-semibold">
+          {pkg ? "Edit Course" : "Create New Course"}
+        </h3>
         <form onSubmit={handleSubmit} className="mt-4 space-y-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <InputField
@@ -1191,14 +1720,19 @@ function PackageFormModal({
               type="number"
               value={formData.price}
               onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                setFormData({ ...formData, price: Number(e.currentTarget.value) })
+                setFormData({
+                  ...formData,
+                  price: Number(e.currentTarget.value),
+                })
               }
               required
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700">Cover Image</label>
+            <label className="block text-sm font-medium text-slate-700">
+              Cover Image
+            </label>
             <input
               type="file"
               id="image-upload"
@@ -1208,7 +1742,9 @@ function PackageFormModal({
             />
             {imagePreview && (
               <div className="relative mt-4 w-40">
-                <p className="mb-1 text-xs font-medium text-slate-500">Preview:</p>
+                <p className="mb-1 text-xs font-medium text-slate-500">
+                  Preview:
+                </p>
                 <Image
                   src={imagePreview}
                   alt="Preview"
@@ -1228,7 +1764,9 @@ function PackageFormModal({
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700">Included Sub-courses</label>
+            <label className="block text-sm font-medium text-slate-700">
+              Included Sub-courses
+            </label>
             <div className="mt-2 max-h-56 space-y-2 overflow-y-auto rounded-md border p-2">
               {allCourses.map((course) => (
                 <label
@@ -1245,7 +1783,9 @@ function PackageFormModal({
                 </label>
               ))}
               {allCourses.length === 0 && (
-                <div className="p-2 text-sm text-slate-500">No sub-courses available.</div>
+                <div className="p-2 text-sm text-slate-500">
+                  No sub-courses available.
+                </div>
               )}
             </div>
           </div>
@@ -1307,7 +1847,10 @@ function PackageFormModal({
                   checked={formData.discountActive}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => {
                     const checked = e.target.checked;
-                    setFormData((prev) => ({ ...prev, discountActive: checked }));
+                    setFormData((prev) => ({
+                      ...prev,
+                      discountActive: checked,
+                    }));
                   }}
                   className="h-4 w-4 rounded text-emerald-600 focus:ring-emerald-500"
                 />
@@ -1336,7 +1879,10 @@ function PackageFormModal({
                 id="discountLabel"
                 value={formData.discountLabel}
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                  setFormData({ ...formData, discountLabel: e.currentTarget.value })
+                  setFormData({
+                    ...formData,
+                    discountLabel: e.currentTarget.value,
+                  })
                 }
                 placeholder="e.g., Summer Sale"
                 disabled={!formData.discountActive}
@@ -1344,7 +1890,8 @@ function PackageFormModal({
             </div>
             <div className="mt-3 text-sm">
               <span className="text-slate-600">Effective price: </span>
-              {formData.discountActive && (formData.discountPercent || 0) > 0 ? (
+              {formData.discountActive &&
+              (formData.discountPercent || 0) > 0 ? (
                 <span className="font-semibold text-emerald-700">
                   Rs {Number(computedDiscounted).toLocaleString()}
                   <span className="ml-2 line-through text-slate-400">
@@ -1372,7 +1919,10 @@ function PackageFormModal({
                   checked={formData.showRating}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => {
                     const checked = e.target.checked;
-                    setFormData((prev) => ({ ...prev, showRating: checked }));
+                    setFormData((prev) => ({
+                      ...prev,
+                      showRating: checked,
+                    }));
                   }}
                   className="h-4 w-4 rounded text-amber-600 focus:ring-amber-500"
                 />
@@ -1389,7 +1939,10 @@ function PackageFormModal({
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
                   setFormData({
                     ...formData,
-                    rating: Math.max(0, Math.min(5, Number(e.currentTarget.value) || 0)),
+                    rating: Math.max(
+                      0,
+                      Math.min(5, Number(e.currentTarget.value) || 0)
+                    ),
                   })
                 }
                 disabled={!formData.showRating}
@@ -1403,7 +1956,10 @@ function PackageFormModal({
                 onChange={(e: ChangeEvent<HTMLInputElement>) =>
                   setFormData({
                     ...formData,
-                    ratingCount: Math.max(0, Math.floor(Number(e.currentTarget.value) || 0)),
+                    ratingCount: Math.max(
+                      0,
+                      Math.floor(Number(e.currentTarget.value) || 0)
+                    ),
                   })
                 }
                 disabled={!formData.showRating}
@@ -1461,7 +2017,9 @@ function SpecialPackageFormModal({
     note: specialPkg?.note || "",
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(specialPkg?.imageUrl || null);
+  const [imagePreview, setImagePreview] = useState<string | null>(
+    specialPkg?.imageUrl || null
+  );
 
   // Load all users for searching & assigning
   const [allUsers, setAllUsers] = useState<UserLite[]>([]);
@@ -1486,7 +2044,11 @@ function SpecialPackageFormModal({
     const q = query.trim().toLowerCase();
     if (!q) return [];
     return allUsers
-      .filter(u => u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
+      .filter(
+        (u) =>
+          u.name.toLowerCase().includes(q) ||
+          u.email.toLowerCase().includes(q)
+      )
       .slice(0, 8);
   }, [query, allUsers]);
 
@@ -1503,21 +2065,23 @@ function SpecialPackageFormModal({
   const handleRemoveImage = () => {
     setImageFile(null);
     setImagePreview(null);
-    setFormData(prev => ({ ...prev, imageUrl: "" }));
-    const fileInput = document.getElementById("sp-image-upload") as HTMLInputElement | null;
+    setFormData((prev) => ({ ...prev, imageUrl: "" }));
+    const fileInput = document.getElementById(
+      "sp-image-upload"
+    ) as HTMLInputElement | null;
     if (fileInput) fileInput.value = "";
   };
 
   // Local-only assign/revoke; actual DB updates happen on Save Special Package
   const handleAssignUser = (uid: string) => {
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
       assignedUserIds: { ...(prev.assignedUserIds || {}), [uid]: true },
     }));
   };
 
   const handleRevokeUser = (uid: string) => {
-    setFormData(prev => {
+    setFormData((prev) => {
       const copy = { ...(prev.assignedUserIds || {}) };
       delete copy[uid];
       return { ...prev, assignedUserIds: copy };
@@ -1550,7 +2114,10 @@ function SpecialPackageFormModal({
     specialPkg?.note,
   ]);
 
-  const shallowEqualMap = (a: Record<string, boolean>, b: Record<string, boolean>) => {
+  const shallowEqualMap = (
+    a: Record<string, boolean>,
+    b: Record<string, boolean>
+  ) => {
     const ak = Object.keys(a || {});
     const bk = Object.keys(b || {});
     if (ak.length !== bk.length) return false;
@@ -1562,12 +2129,18 @@ function SpecialPackageFormModal({
 
   const isDirty = useMemo(() => {
     const same =
-      (formData.name || "").trim() === (initialBaseline.name || "").trim() &&
-      Number(formData.price || 0) === Number(initialBaseline.price || 0) &&
+      (formData.name || "").trim() ===
+        (initialBaseline.name || "").trim() &&
+      Number(formData.price || 0) ===
+        Number(initialBaseline.price || 0) &&
       (formData.imageUrl || "") === (initialBaseline.imageUrl || "") &&
-      Number(formData.commissionPercent || 0) === Number(initialBaseline.commissionPercent || 0) &&
+      Number(formData.commissionPercent || 0) ===
+        Number(initialBaseline.commissionPercent || 0) &&
       (formData.note || "") === (initialBaseline.note || "") &&
-      shallowEqualMap(formData.assignedUserIds || {}, initialBaseline.assignedUserIds || {}) &&
+      shallowEqualMap(
+        formData.assignedUserIds || {},
+        initialBaseline.assignedUserIds || {}
+      ) &&
       imageFile === null;
     return !same;
   }, [formData, initialBaseline, imageFile]);
@@ -1575,14 +2148,18 @@ function SpecialPackageFormModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm">
       <div className="relative max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-xl">
-        <h3 className="text-xl font-semibold">{specialPkg ? "Edit Special Package" : "Create Special Package"}</h3>
+        <h3 className="text-xl font-semibold">
+          {specialPkg ? "Edit Special Package" : "Create Special Package"}
+        </h3>
         <form onSubmit={handleSubmit} className="mt-4 space-y-6">
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <InputField
               label="Package Name"
               id="special-name"
               value={formData.name}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, name: e.currentTarget.value })}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                setFormData({ ...formData, name: e.currentTarget.value })
+              }
               required
             />
             <InputField
@@ -1590,7 +2167,12 @@ function SpecialPackageFormModal({
               id="special-price"
               type="number"
               value={formData.price}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, price: Number(e.currentTarget.value) })}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                setFormData({
+                  ...formData,
+                  price: Number(e.currentTarget.value),
+                })
+              }
               required
             />
           </div>
@@ -1606,7 +2188,10 @@ function SpecialPackageFormModal({
               onChange={(e: ChangeEvent<HTMLInputElement>) =>
                 setFormData({
                   ...formData,
-                  commissionPercent: Math.max(0, Math.min(100, Number(e.currentTarget.value))),
+                  commissionPercent: Math.max(
+                    0,
+                    Math.min(100, Number(e.currentTarget.value))
+                  ),
                 })
               }
               required
@@ -1616,13 +2201,17 @@ function SpecialPackageFormModal({
               label="Note (optional)"
               id="special-note"
               value={formData.note || ""}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setFormData({ ...formData, note: e.currentTarget.value })}
+              onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                setFormData({ ...formData, note: e.currentTarget.value })
+              }
               placeholder="Internal note only visible to admin"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-slate-700">Cover Image</label>
+            <label className="block text-sm font-medium text-slate-700">
+              Cover Image
+            </label>
             <input
               type="file"
               id="sp-image-upload"
@@ -1632,8 +2221,16 @@ function SpecialPackageFormModal({
             />
             {imagePreview && (
               <div className="relative mt-4 w-40">
-                <p className="mb-1 text-xs font-medium text-slate-500">Preview:</p>
-                <Image src={imagePreview} alt="Preview" width={160} height={90} className="h-20 w-36 rounded-md border object-cover" />
+                <p className="mb-1 text-xs font-medium text-slate-500">
+                  Preview:
+                </p>
+                <Image
+                  src={imagePreview}
+                  alt="Preview"
+                  width={160}
+                  height={90}
+                  className="h-20 w-36 rounded-md border object-cover"
+                />
                 <button
                   type="button"
                   onClick={handleRemoveImage}
@@ -1661,21 +2258,36 @@ function SpecialPackageFormModal({
             {query && (
               <div className="mt-2 max-h-40 overflow-y-auto rounded-md border">
                 {filteredUsers.length === 0 ? (
-                  <div className="p-3 text-sm text-slate-500">No matches.</div>
+                  <div className="p-3 text-sm text-slate-500">
+                    No matches.
+                  </div>
                 ) : (
                   filteredUsers.map((u) => (
-                    <div key={u.id} className="flex items-center justify-between p-2 hover:bg-slate-50">
+                    <div
+                      key={u.id}
+                      className="flex items-center justify-between p-2 hover:bg-slate-50"
+                    >
                       <div className="flex items-center gap-3">
                         <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-slate-200">
                           {u.imageUrl ? (
-                            <Image src={u.imageUrl} alt={u.name} width={32} height={32} className="object-cover" />
+                            <Image
+                              src={u.imageUrl}
+                              alt={u.name}
+                              width={32}
+                              height={32}
+                              className="object-cover"
+                            />
                           ) : (
                             <UserIcon className="h-5 w-5 text-slate-400" />
                           )}
                         </div>
                         <div>
-                          <div className="text-sm font-medium">{u.name || "-"}</div>
-                          <div className="text-xs text-slate-500">{u.email}</div>
+                          <div className="text-sm font-medium">
+                            {u.name || "-"}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {u.email}
+                          </div>
                         </div>
                       </div>
                       <button
@@ -1695,14 +2307,21 @@ function SpecialPackageFormModal({
             {/* Assigned Users list */}
             <div className="mt-4">
               <h5 className="text-sm font-semibold text-slate-700">
-                Assigned Users ({Object.keys(formData.assignedUserIds || {}).length})
+                Assigned Users (
+                {Object.keys(formData.assignedUserIds || {}).length})
               </h5>
               <div className="mt-2 max-h-48 space-y-2 overflow-y-auto">
                 {Object.keys(formData.assignedUserIds || {}).length === 0 ? (
-                  <div className="text-sm text-slate-500">No users assigned yet.</div>
+                  <div className="text-sm text-slate-500">
+                    No users assigned yet.
+                  </div>
                 ) : (
                   Object.keys(formData.assignedUserIds || {}).map((uid) => (
-                    <AssignedUserRow key={uid} uid={uid} onRevoke={() => handleRevokeUser(uid)} />
+                    <AssignedUserRow
+                      key={uid}
+                      uid={uid}
+                      onRevoke={() => handleRevokeUser(uid)}
+                    />
                   ))
                 )}
               </div>
@@ -1710,7 +2329,11 @@ function SpecialPackageFormModal({
           </div>
 
           <div className="mt-6 flex justify-end gap-3 border-t pt-4">
-            <button type="button" onClick={onClose} className="rounded-md bg-slate-100 px-4 py-2 text-sm">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md bg-slate-100 px-4 py-2 text-sm"
+            >
               Cancel
             </button>
             <button
@@ -1724,7 +2347,8 @@ function SpecialPackageFormModal({
           </div>
 
           <p className="mt-4 text-xs text-slate-500">
-            Assign/revoke changes are applied only after you click “Save Special Package”.
+            Assign/revoke changes are applied only after you click “Save
+            Special Package”.
           </p>
         </form>
       </div>
@@ -1732,7 +2356,13 @@ function SpecialPackageFormModal({
   );
 }
 
-function AssignedUserRow({ uid, onRevoke }: { uid: string; onRevoke: () => void }) {
+function AssignedUserRow({
+  uid,
+  onRevoke,
+}: {
+  uid: string;
+  onRevoke: () => void;
+}) {
   const [user, setUser] = useState<UserLite | null>(null);
   useEffect(() => {
     const uref = dbRef(database, `users/${uid}`);
@@ -1753,14 +2383,22 @@ function AssignedUserRow({ uid, onRevoke }: { uid: string; onRevoke: () => void 
       <div className="flex items-center gap-3">
         <div className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-full bg-slate-200">
           {user?.imageUrl ? (
-            <Image src={user.imageUrl} alt={user.name} width={32} height={32} className="object-cover" />
+            <Image
+              src={user.imageUrl}
+              alt={user.name}
+              width={32}
+              height={32}
+              className="object-cover"
+            />
           ) : (
             <UserIcon className="h-5 w-5 text-slate-400" />
           )}
         </div>
         <div>
           <div className="text-sm font-medium">{user?.name || uid}</div>
-          <div className="text-xs text-slate-500">{user?.email || "-"}</div>
+          <div className="text-xs text-slate-500">
+            {user?.email || "-"}
+          </div>
         </div>
       </div>
       <button
@@ -1782,7 +2420,10 @@ function InputField({
 }: { id: string; label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <div>
-      <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-slate-700">
+      <label
+        htmlFor={id}
+        className="mb-1.5 block text-sm font-medium text-slate-700"
+      >
         {label}
       </label>
       <input
@@ -1822,14 +2463,23 @@ function SearchIcon(props: SVGProps<SVGSVGElement>) {
 function UserPlusIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
-      <path strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" d="M12 14c-3.5 0-6 2-6 4v2h8m6-8v6m3-3h-6M12 14a4 4 0 10-4-4 4 4 0 004 4z" />
+      <path
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M12 14c-3.5 0-6 2-6 4v2h8m6-8v6m3-3h-6M12 14a4 4 0 10-4-4 4 4 0 004 4z"
+      />
     </svg>
   );
 }
 function UserIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 20 20" fill="currentColor" {...props}>
-      <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
+      <path
+        fillRule="evenodd"
+        d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z"
+        clipRule="evenodd"
+      />
     </svg>
   );
 }
