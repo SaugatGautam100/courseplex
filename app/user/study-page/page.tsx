@@ -231,7 +231,9 @@ export default function StudyPage() {
       return;
     }
     setSelectedPackageId((prev) =>
-      prev && accessiblePackageIds.includes(prev) ? prev : accessiblePackageIds[0] || null
+      prev && accessiblePackageIds.includes(prev)
+        ? prev
+        : accessiblePackageIds[0] || null
     );
   }, [accessiblePackageIds]);
 
@@ -249,7 +251,9 @@ export default function StudyPage() {
       setSelectedVideo(null);
       return;
     }
-    setSelectedSubCourseId((prev) => (prev && subIds.includes(prev) ? prev : subIds[0]));
+    setSelectedSubCourseId((prev) =>
+      prev && subIds.includes(prev) ? prev : subIds[0]
+    );
   }, [selectedPackageId, packagesMap]);
 
   useEffect(() => {
@@ -309,7 +313,10 @@ export default function StudyPage() {
     return { total, done, pct, completed: total > 0 && done >= total };
   }, [selectedPackage, progress, coursesMap]);
 
-  const toggleVideoCompleted = async (subCourseId: string, videoId: string) => {
+  const toggleVideoCompleted = async (
+    subCourseId: string,
+    videoId: string
+  ) => {
     if (!userId) return;
     const current = !!progress?.[subCourseId]?.[videoId];
     try {
@@ -804,10 +811,12 @@ export default function StudyPage() {
             <div className="flex-1 overflow-auto bg-slate-200/80 p-4 md:p-6 flex justify-center">
               <div
                 ref={certRef}
-                className="relative overflow-hidden shadow-2xl"
+                className="relative overflow-hidden shadow-2xl shrink-0"
                 style={{
                   width: "1200px",
                   height: "800px",
+                  minWidth: "1200px",
+                  minHeight: "800px",
                   backgroundColor: "#fbf7f0",
                   fontFamily: "'Lora', serif",
                 }}
