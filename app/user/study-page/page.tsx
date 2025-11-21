@@ -19,7 +19,12 @@ type Package = {
 };
 type PackagesDb = Record<string, Omit<Package, "id"> | undefined>;
 type CoursesDb = Record<string, Omit<Course, "id"> | undefined>;
-type SpecialAccess = { active?: boolean; enabled?: boolean; packageId?: string; commissionPercent?: number };
+type SpecialAccess = {
+  active?: boolean;
+  enabled?: boolean;
+  packageId?: string;
+  commissionPercent?: number;
+};
 
 type UserNode = {
   name?: string;
@@ -35,6 +40,7 @@ type UserNode = {
       certificateId: string;
       courseTitle: string;
       issuedAt: string;
+      recipientName?: string; // to lock the name used on the certificate
     }
   >;
 };
@@ -70,7 +76,9 @@ async function loadScript(src: string) {
 
 // Allow DOM to paint before capture
 function waitForNextFrame() {
-  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  return new Promise<void>((resolve) =>
+    requestAnimationFrame(() => resolve())
+  );
 }
 
 // Ensure all images inside a node are loaded to avoid blank captures
@@ -99,33 +107,32 @@ export default function StudyPage() {
   const [userEmail, setUserEmail] = useState<string | undefined>(undefined);
   const [userPhone, setUserPhone] = useState<string | undefined>(undefined);
 
-  const [specialAccess, setSpecialAccess] = useState<SpecialAccess | null>(null);
+  const [specialAccess, setSpecialAccess] = useState<SpecialAccess | null>(
+    null
+  );
   const [ownedPackageIds, setOwnedPackageIds] = useState<string[]>([]);
   const [legacyPackageId, setLegacyPackageId] = useState<string | null>(null);
 
   const [packagesMap, setPackagesMap] = useState<Record<string, Package>>({});
   const [coursesMap, setCoursesMap] = useState<Record<string, Course>>({});
 
-  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
-  const [selectedSubCourseId, setSelectedSubCourseId] = useState<string | null>(null);
+  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(
+    null
+  );
+  const [selectedSubCourseId, setSelectedSubCourseId] = useState<string | null>(
+    null
+  );
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
 
-  const [progress, setProgress] = useState<Record<string, Record<string, boolean>>>({});
-  const [certificates, setCertificates] = useState<UserNode["certificates"]>({});
+  const [progress, setProgress] = useState<
+    Record<string, Record<string, boolean>>
+  >({});
+  const [certificates, setCertificates] =
+    useState<UserNode["certificates"]>({});
   const [loading, setLoading] = useState(true);
 
   const [showCertModal, setShowCertModal] = useState(false);
   const certRef = useRef<HTMLDivElement | null>(null);
-
-  const issueDate = useMemo(
-    () =>
-      new Date().toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      }),
-    []
-  );
 
   // Auth + live user node
   useEffect(() => {
@@ -139,7 +146,7 @@ export default function StudyPage() {
       const userRef = dbRef(database, `users/${cu.uid}`);
       const off = onValue(
         userRef,
-        async (snap) => {
+        (snap) => {
           const val = (snap.val() || {}) as UserNode;
           setUserName(val?.name || cu.email || "Student");
           setUserEmail(val?.email || cu.email || undefined);
@@ -152,6 +159,7 @@ export default function StudyPage() {
             .map(([id]) => id);
           setOwnedPackageIds(owned);
           setLegacyPackageId(val?.courseId || null);
+          setLoading(false);
         },
         () => setLoading(false)
       );
@@ -181,7 +189,11 @@ export default function StudyPage() {
         const cMap: Record<string, Course> = {};
         Object.entries(cVal).forEach(([id, v]) => {
           if (!v) return;
-          cMap[id] = { id, title: v.title || "Untitled Sub-course", videos: v.videos || {} };
+          cMap[id] = {
+            id,
+            title: v.title || "Untitled Sub-course",
+            videos: v.videos || {},
+          };
         });
 
         setPackagesMap(pMap);
@@ -252,7 +264,7 @@ export default function StudyPage() {
       return;
     }
     const [id, v] = vids[0];
-    setSelectedVideo({ id, title: v.title, url: v.url });
+    setSelectedVideo((prev) => prev ?? { id, title: v.title, url: v.url });
   }, [selectedSubCourseId, coursesMap]);
 
   // Derived data
@@ -280,15 +292,17 @@ export default function StudyPage() {
 
   // Package completion
   const packageCompletion = useMemo(() => {
-    if (!selectedPackage) return { total: 0, done: 0, pct: 0, completed: false };
+    if (!selectedPackage)
+      return { total: 0, done: 0, pct: 0, completed: false };
     const subIds = Object.keys(selectedPackage.courseIds || {});
     let total = 0;
     let done = 0;
     subIds.forEach((cid) => {
       const vids = Object.keys(coursesMap[cid]?.videos || {});
       total += vids.length;
-      const doneHere = Object.keys(progress[cid] || {}).filter((vid) => progress[cid]?.[vid])
-        .length;
+      const doneHere = Object.keys(progress[cid] || {}).filter(
+        (vid) => progress[cid]?.[vid]
+      ).length;
       done += Math.min(doneHere, vids.length);
     });
     const pct = total > 0 ? Math.round((done / total) * 100) : 0;
@@ -299,15 +313,68 @@ export default function StudyPage() {
     if (!userId) return;
     const current = !!progress?.[subCourseId]?.[videoId];
     try {
-      await set(dbRef(database, `users/${userId}/progress/${subCourseId}/${videoId}`), !current);
+      await set(
+        dbRef(
+          database,
+          `users/${userId}/progress/${subCourseId}/${videoId}`
+        ),
+        !current
+      );
     } catch (e) {
       console.error("Failed to update progress:", e);
     }
   };
 
-  // Certificate download
+  /* ================== Certificate Logic ================== */
+
+  // Build current certificate (locked after first save)
+  const activeCertificate = useMemo(() => {
+    if (!selectedPackage) return null;
+    const existing = certificates?.[selectedPackage.id];
+    if (existing) {
+      return {
+        ...existing,
+        recipientName: existing.recipientName || userName,
+        isNew: false,
+      } as {
+        certificateId: string;
+        courseTitle: string;
+        issuedAt: string;
+        recipientName: string;
+        isNew: boolean;
+      };
+    }
+    return {
+      certificateId: `${selectedPackage.id}-${userId?.slice(
+        0,
+        6
+      )}-${Date.now()}`,
+      courseTitle: selectedPackage.name,
+      issuedAt: new Date().toISOString(),
+      recipientName: userName,
+      isNew: true,
+    } as {
+      certificateId: string;
+      courseTitle: string;
+      issuedAt: string;
+      recipientName: string;
+      isNew: boolean;
+    };
+  }, [selectedPackage, certificates, userName, userId]);
+
+  const displayDate = useMemo(() => {
+    if (!activeCertificate) return "";
+    return new Date(activeCertificate.issuedAt).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+    });
+  }, [activeCertificate]);
+
+  // Certificate download (one-time issue, multi-download)
   const downloadCertificatePNG = async () => {
-    if (!certRef.current || !selectedPackage) return;
+    if (!certRef.current || !selectedPackage || !userId || !activeCertificate)
+      return;
     try {
       if (!window.html2canvas) {
         await loadScript(
@@ -315,29 +382,36 @@ export default function StudyPage() {
         );
       }
 
-      // Make sure all images are loaded and DOM is painted
       await ensureImagesLoaded(certRef.current);
       await waitForNextFrame();
 
-      // Save cert record first
-      if (userId) {
-        const certId = `${selectedPackage.id}-${Date.now()}`;
-        await set(dbRef(database, `users/${userId}/certificates/${selectedPackage.id}`), {
-          certificateId: certId,
-          courseTitle: selectedPackage.name,
-          issuedAt: new Date().toISOString(),
-        });
+      // Persist only the first time (locks name, course, date)
+      if (activeCertificate.isNew) {
+        await set(
+          dbRef(
+            database,
+            `users/${userId}/certificates/${selectedPackage.id}`
+          ),
+          {
+            certificateId: activeCertificate.certificateId,
+            courseTitle: activeCertificate.courseTitle,
+            issuedAt: activeCertificate.issuedAt,
+            recipientName: activeCertificate.recipientName,
+          }
+        );
       }
 
       const canvas = await window.html2canvas!(certRef.current, {
-        backgroundColor: "#ffffff",
-        scale: Math.max(2, Math.min(3, window.devicePixelRatio || 2)),
+        backgroundColor: "#fbf7f0",
+        scale: 3,
         useCORS: true,
-        allowTaint: false,
+        allowTaint: true,
         logging: false,
       });
 
-      const filename = `Certificate-${selectedPackage.name.replace(/\s+/g, "-")}.png`;
+      const filename = `certificate-${selectedPackage.name
+        .replace(/[^a-z0-9]/gi, "-")
+        .toLowerCase()}.png`;
 
       const data = canvas.toDataURL("image/png");
       const a = document.createElement("a");
@@ -366,7 +440,9 @@ export default function StudyPage() {
   if (accessiblePackageIds.length === 0) {
     return (
       <div className="text-center p-8 max-w-lg mx-auto">
-        <h1 className="text-2xl font-bold text-slate-900">No Courses Available</h1>
+        <h1 className="text-2xl font-bold text-slate-900">
+          No Courses Available
+        </h1>
         <p className="mt-2 text-slate-600">
           It looks like you haven’t enrolled in any main course yet.
         </p>
@@ -384,6 +460,11 @@ export default function StudyPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 pb-16">
+      {/* Global fonts for the classical certificate */}
+      <style jsx global>{`
+        @import url("https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Great+Vibes&family=Lora:ital,wght@0,400;0,700;1,400&display=swap");
+      `}</style>
+
       {/* Header */}
       <header className="mb-6 flex flex-col gap-2">
         <div className="inline-flex items-center gap-2 self-start rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700 ring-1 ring-indigo-200">
@@ -394,8 +475,8 @@ export default function StudyPage() {
           Your Learning Space
         </h1>
         <p className="text-slate-600">
-          Welcome back, {userName.split(" ")[0]}! Choose a course, complete all content, and
-          earn your certificate.
+          Welcome back, {userName.split(" ")[0]}! Complete your lessons and
+          download a beautiful certificate for each course.
         </p>
       </header>
 
@@ -463,10 +544,12 @@ export default function StudyPage() {
                 <div className="flex items-center gap-3">
                   <AwardIcon className="h-8 w-8 text-amber-500" />
                   <div>
-                    <h3 className="text-lg font-bold text-slate-900">Congratulations!</h3>
+                    <h3 className="text-lg font-bold text-slate-900">
+                      Congratulations!
+                    </h3>
                     <p className="text-sm text-slate-600">
-                      You’ve completed “{selectedPackage.name}”. Generate and download your
-                      certificate.
+                      You’ve completed “{selectedPackage.name}”. Generate and
+                      download your classical certificate.
                     </p>
                   </div>
                 </div>
@@ -476,7 +559,7 @@ export default function StudyPage() {
                     className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-700"
                   >
                     <DownloadIcon className="h-4 w-4" />
-                    Get Certificate
+                    View Certificate
                   </button>
                 </div>
               </div>
@@ -489,7 +572,9 @@ export default function StudyPage() {
           {/* Main course selector */}
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-700">Your Courses</h3>
+              <h3 className="text-sm font-semibold text-slate-700">
+                Your Courses
+              </h3>
               {selectedPackage && (
                 <span className="text-xs font-semibold text-slate-500">
                   {packageCompletion.pct}%
@@ -507,10 +592,14 @@ export default function StudyPage() {
                 subIds.forEach((cid) => {
                   const vids = Object.keys(coursesMap[cid]?.videos || {});
                   total += vids.length;
-                  done += Object.keys(progress[cid] || {}).filter((k) => progress[cid]?.[k])
-                    .length;
+                  done += Object.keys(progress[cid] || {}).filter(
+                    (k) => progress[cid]?.[k]
+                  ).length;
                 });
-                const pct = total > 0 ? Math.round((Math.min(done, total) / total) * 100) : 0;
+                const pct =
+                  total > 0
+                    ? Math.round((Math.min(done, total) / total) * 100)
+                    : 0;
                 const active = selectedPackageId === pid;
 
                 return (
@@ -518,7 +607,9 @@ export default function StudyPage() {
                     key={pid}
                     onClick={() => setSelectedPackageId(pid)}
                     className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${
-                      active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"
+                      active
+                        ? "border-indigo-400 bg-indigo-50"
+                        : "border-slate-200 bg-white"
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -551,7 +642,9 @@ export default function StudyPage() {
                           />
                         </div>
                       </div>
-                      <div className="text-xs font-semibold text-slate-500">{pct}%</div>
+                      <div className="text-xs font-semibold text-slate-500">
+                        {pct}%
+                      </div>
                     </div>
                   </button>
                 );
@@ -559,7 +652,7 @@ export default function StudyPage() {
             </div>
           </div>
 
-          {/* Sub-courses for selected package (now scrollable) */}
+          {/* Sub-courses for selected package */}
           <div className="rounded-2xl border bg-white p-4 shadow-sm">
             <h3 className="text-sm font-semibold text-slate-700">Sub-courses</h3>
             <div className="mt-3 grid grid-cols-1 gap-2 max-h-72 overflow-y-auto pr-1">
@@ -573,7 +666,9 @@ export default function StudyPage() {
                   ).length;
                   const pct =
                     vids.length > 0
-                      ? Math.round((Math.min(done, vids.length) / vids.length) * 100)
+                      ? Math.round(
+                          (Math.min(done, vids.length) / vids.length) * 100
+                        )
                       : 0;
                   const active = selectedSubCourseId === cid;
                   return (
@@ -581,7 +676,9 @@ export default function StudyPage() {
                       key={cid}
                       onClick={() => setSelectedSubCourseId(cid)}
                       className={`w-full rounded-xl border p-3 text-left transition hover:shadow-sm ${
-                        active ? "border-indigo-400 bg-indigo-50" : "border-slate-200 bg-white"
+                        active
+                          ? "border-indigo-400 bg-indigo-50"
+                          : "border-slate-200 bg-white"
                       }`}
                     >
                       <div className="flex items-center justify-between">
@@ -592,7 +689,9 @@ export default function StudyPage() {
                         >
                           {sc.title}
                         </span>
-                        <span className="text-xs font-semibold text-slate-500">{pct}%</span>
+                        <span className="text-xs font-semibold text-slate-500">
+                          {pct}%
+                        </span>
                       </div>
                       <div className="mt-2 h-2 w-full rounded-full bg-slate-200">
                         <div
@@ -613,7 +712,7 @@ export default function StudyPage() {
             </div>
           </div>
 
-          {/* Videos in selected sub-course (now scrollable + mobile-friendly) */}
+          {/* Videos in selected sub-course */}
           <div className="rounded-2xl border bg-white p-3 shadow-sm">
             <h3 className="px-1 text-sm font-semibold text-slate-700">
               {selectedSubCourse?.title || "Videos"}
@@ -630,24 +729,34 @@ export default function StudyPage() {
                     >
                       <button
                         onClick={() =>
-                          setSelectedVideo({ id: v.id, title: v.title, url: v.url })
+                          setSelectedVideo({
+                            id: v.id,
+                            title: v.title,
+                            url: v.url,
+                          })
                         }
                         className={`flex-1 text-left text-[13px] ${
-                          active ? "text-indigo-700 font-semibold" : "text-slate-700"
+                          active
+                            ? "text-indigo-700 font-semibold"
+                            : "text-slate-700"
                         }`}
                         title={v.title}
                       >
                         {v.title}
                       </button>
                       <button
-                        onClick={() => toggleVideoCompleted(selectedSubCourse!.id, v.id)}
+                        onClick={() =>
+                          toggleVideoCompleted(selectedSubCourse!.id, v.id)
+                        }
                         className={`inline-flex h-6 w-6 items-center justify-center rounded-full ring-1 ring-slate-200 ${
                           done ? "bg-emerald-100" : "bg-white"
                         }`}
                         title={done ? "Completed" : "Mark as completed"}
                       >
                         <CheckIcon
-                          className={`h-4 w-4 ${done ? "text-emerald-600" : "text-slate-400"}`}
+                          className={`h-4 w-4 ${
+                            done ? "text-emerald-600" : "text-slate-400"
+                          }`}
                         />
                       </button>
                     </div>
@@ -674,110 +783,183 @@ export default function StudyPage() {
         </aside>
       </div>
 
-      {/* ====== Certificate Modal (Redesigned) ====== */}
-      {showCertModal && selectedPackage && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-          <div className="relative w-full max-w-4xl overflow-hidden rounded-2xl bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b px-4 py-3">
-              <h3 className="text-lg font-semibold">Certificate of Completion</h3>
+      {/* ====== Classical Certificate Modal ====== */}
+      {showCertModal && selectedPackage && activeCertificate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/80 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="relative w-full max-w-5xl bg-white rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b px-6 py-4 bg-slate-50 rounded-t-2xl">
+              <h3 className="text-lg font-semibold text-slate-800">
+                Certificate Preview
+              </h3>
               <button
                 onClick={() => setShowCertModal(false)}
-                className="rounded-full p-1 hover:bg-slate-100"
+                className="rounded-full p-1.5 hover:bg-slate-200 text-slate-500"
               >
                 <CloseIcon className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="max-h-[70vh] overflow-auto bg-slate-100/60 p-6">
+            {/* Certificate Canvas */}
+            <div className="flex-1 overflow-auto bg-slate-200/80 p-4 md:p-6 flex justify-center">
               <div
                 ref={certRef}
-                className="relative mx-auto aspect-[11/8.5] w-full max-w-3xl overflow-hidden rounded-xl bg-white shadow-lg ring-1 ring-slate-200"
+                className="relative overflow-hidden shadow-2xl"
+                style={{
+                  width: "1200px",
+                  height: "800px",
+                  backgroundColor: "#fbf7f0",
+                  fontFamily: "'Lora', serif",
+                }}
               >
-                {/* Header strip with logo + brand + title */}
-                <div className="relative flex items-center justify-between bg-gradient-to-r from-indigo-700 via-violet-600 to-fuchsia-600 px-6 py-4 text-white">
-                  <div className="flex items-center gap-3">
-                    <img
-                      src="/images/courseplexlogo.png"
-                      alt="Plex Courses Logo"
-                      crossOrigin="anonymous"
-                      className="h-10 w-10 object-contain"
-                    />
-                    <div className="leading-tight">
-                      <div className="text-sm opacity-90">Presented by</div>
-                      <div className="text-xl font-extrabold tracking-tight">Plex Courses</div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs uppercase tracking-widest opacity-90">
-                      Official Document
-                    </div>
-                    <div className="text-lg font-bold">Certificate of Completion</div>
-                  </div>
+                {/* Outer gold borders */}
+                <div className="absolute inset-10 border border-[#d4af37]" />
+                <div className="absolute inset-16 border border-[#d4af37]/60" />
+
+                {/* Subtle dotted pattern */}
+                <div
+                  className="absolute inset-16 opacity-25 pointer-events-none"
+                  style={{
+                    backgroundImage:
+                      "radial-gradient(circle at 1px 1px, rgba(212,175,55,0.35) 1px, transparent 0)",
+                    backgroundSize: "18px 18px",
+                  }}
+                />
+
+                {/* Corner line ornaments */}
+                <div className="absolute top-20 left-20 text-[#d4af37]">
+                  <div className="h-[2px] w-24 bg-current mb-1" />
+                  <div className="h-[2px] w-20 bg-current mb-1" />
+                  <div className="h-[2px] w-16 bg-current" />
+                </div>
+                <div className="absolute bottom-20 left-20 text-[#d4af37]">
+                  <div className="h-[2px] w-16 bg-current mb-1" />
+                  <div className="h-[2px] w-20 bg-current mb-1" />
+                  <div className="h-[2px] w-24 bg-current" />
+                </div>
+                <div className="absolute top-20 right-20 text-[#d4af37] text-right">
+                  <div className="h-[2px] w-24 bg-current mb-1 ml-auto" />
+                  <div className="h-[2px] w-20 bg-current mb-1 ml-auto" />
+                  <div className="h-[2px] w-16 bg-current ml-auto" />
+                </div>
+                <div className="absolute bottom-20 right-20 text-[#d4af37] text-right">
+                  <div className="h-[2px] w-16 bg-current mb-1 ml-auto" />
+                  <div className="h-[2px] w-20 bg-current mb-1 ml-auto" />
+                  <div className="h-[2px] w-24 bg-current ml-auto" />
                 </div>
 
-                {/* Body */}
-                <div className="relative p-8 md:p-10">
-                  {/* subtle frame */}
-                  <div className="absolute inset-4 -z-10 rounded-xl border border-slate-200" />
+                {/* Gold diagonal accents (right side) */}
+                <div className="absolute -right-40 -bottom-40 w-96 h-96 bg-gradient-to-br from-[#f6e3ba] via-[#d4af37] to-[#7a5a2a] rotate-45" />
+                <div className="absolute -right-64 bottom-10 w-96 h-96 bg-gradient-to-br from-[#4b3b21] via-[#b88a3b] to-[#f7e8c8] rotate-45 opacity-80" />
 
-                  <p className="text-sm font-medium text-slate-500">This certifies that</p>
-
-                  {/* Participant name with gradient like brand */}
-                  <h1 className="mt-2 bg-gradient-to-r from-indigo-700 via-violet-700 to-fuchsia-700 bg-clip-text text-4xl font-extrabold tracking-tight text-transparent md:text-5xl">
-                    {userName}
+                {/* Content */}
+                <div className="relative z-10 h-full flex flex-col items-center px-32 py-20 text-center">
+                  {/* Top heading */}
+                  <p className="text-xs tracking-[0.35em] uppercase text-[#b08b3a] font-semibold">
+                    {brand}
+                  </p>
+                  <h1
+                    className="mt-6 text-5xl md:text-6xl font-bold tracking-[0.35em] text-slate-900 uppercase"
+                    style={{ fontFamily: "'Cinzel', serif" }}
+                  >
+                    Certificate
                   </h1>
-
-                  <p className="mt-4 text-sm text-slate-600">
-                    has successfully completed the comprehensive online course
+                  <p
+                    className="mt-4 text-xl md:text-2xl tracking-[0.4em] uppercase text-[#c79b3b]"
+                    style={{ fontFamily: "'Cinzel', serif" }}
+                  >
+                    of Completion
                   </p>
 
-                  <p className="mt-2 text-2xl font-semibold text-slate-900 md:text-3xl">
-                    {selectedPackage.name}
-                  </p>
-
-                  {/* Bottom row: date + seal + signature */}
-                  <div className="mt-10 grid grid-cols-3 items-end gap-4">
-                    {/* Date */}
-                    <div className="text-xs">
-                      <div className="font-semibold text-slate-800">Date Issued</div>
-                      <div className="mt-1 border-t border-slate-300 pt-1 text-slate-600">
-                        {issueDate}
-                      </div>
-                    </div>
-
-                    {/* Seal */}
-                    <div className="relative mx-auto h-24 w-24">
-                      <AwardIcon className="h-full w-full text-amber-400 opacity-90" />
-                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-center text-[10px] font-bold uppercase tracking-wider text-indigo-900">
-                        Official Seal
-                      </div>
-                    </div>
-
-                    {/* Signature */}
-                    <div className="text-right text-xs">
-                      <div
-                        className="font-serif text-lg italic text-slate-700"
-                        style={{ fontFamily: "'Brush Script MT', cursive" }}
-                      >
-                        Plex Courses
-                      </div>
-                      <div className="mt-1 border-t border-slate-300 pt-1 font-semibold text-slate-800">
-                        Authorized Signatory
-                      </div>
-                    </div>
+                  <div className="mt-6 flex flex-col items-center">
+                    <div className="h-[1px] w-32 bg-[#c79b3b]" />
+                    <div className="h-[3px] w-16 bg-[#c79b3b] mt-1" />
                   </div>
 
-                  {/* Footer ID */}
-                  <div className="mt-6 text-right">
-                    <p className="text-[10px] font-mono text-slate-400">
-                      ID: {userId?.slice(0, 8)}-{selectedPackage.id.slice(0, 8)}
+                  <p className="mt-8 text-xs md:text-sm tracking-[0.35em] text-slate-600 uppercase">
+                    This certificate is proudly presented to
+                  </p>
+
+                  {/* Recipient name in cursive italic */}
+                  <div className="mt-6 border-b border-[#c79b3b] pb-3 px-16">
+                    <p
+                      className="text-4xl md:text-5xl text-slate-900 italic"
+                      style={{
+                        fontFamily:
+                          "'Great Vibes', 'Brush Script MT', cursive",
+                      }}
+                    >
+                      {activeCertificate.recipientName}
                     </p>
+                  </div>
+
+                  {/* Description */}
+                  <p className="mt-6 text-sm md:text-base text-slate-700 max-w-3xl leading-relaxed">
+                    This certificate is awarded to{" "}
+                    <span className="font-semibold">
+                      {activeCertificate.recipientName}
+                    </span>{" "}
+                    for successfully completing the online course{" "}
+                    <span className="font-semibold">
+                      “{activeCertificate.courseTitle}”.
+                    </span>{" "}
+                    Your dedication, persistence, and commitment to learning are
+                    truly commendable. Congratulations on this outstanding
+                    achievement.
+                  </p>
+
+                  {/* Bottom section */}
+                  <div className="mt-auto w-full pt-10">
+                    {/* Small divider */}
+                    <div className="flex items-center justify-center gap-10 mb-10">
+                      <div className="h-[1px] w-32 bg-[#c79b3b]" />
+                      <span className="text-[#c79b3b] text-xs tracking-[0.3em] uppercase">
+                        Award of Excellence
+                      </span>
+                      <div className="h-[1px] w-32 bg-[#c79b3b]" />
+                    </div>
+
+                    <div className="flex items-end justify-between gap-10">
+                      {/* Left signature */}
+                      <div className="flex-1 text-left">
+                        <div className="h-px w-40 bg-slate-400 mb-2" />
+                        <p className="text-sm font-semibold text-slate-800">
+                          Plex Courses
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Head of Learning
+                        </p>
+                      </div>
+
+                      {/* Laurel / award icon */}
+                      <div className="flex-1 flex flex-col items-center justify-center">
+                        <AwardIcon className="h-16 w-16 text-[#c79b3b]" />
+                      </div>
+
+                      {/* Right signature */}
+                      <div className="flex-1 text-right">
+                        <div className="h-px w-40 ml-auto bg-slate-400 mb-2" />
+                        <p className="text-sm font-semibold text-slate-800">
+                          {brand} Mentor
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Course Instructor
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Footer ID */}
+                    <div className="mt-8 text-[10px] text-slate-500 tracking-[0.3em] uppercase text-center">
+                      ID: {activeCertificate.certificateId} • Issued{" "}
+                      {displayDate}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-3 border-t p-3">
+            {/* Actions */}
+            <div className="flex items-center justify-end gap-3 border-t p-3 bg-white rounded-b-2xl">
               <button
                 onClick={() => setShowCertModal(false)}
                 className="rounded-md bg-slate-100 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-200"
@@ -828,7 +1010,12 @@ function DownloadIcon(props: SVGProps<SVGSVGElement>) {
 }
 function CloseIcon(props: SVGProps<SVGSVGElement>) {
   return (
-    <svg viewBox="0 0 20 20" aria-hidden fill="currentColor" {...props}>
+    <svg
+      viewBox="0 0 20 20"
+      aria-hidden
+      fill="currentColor"
+      {...props}
+    >
       <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
     </svg>
   );
