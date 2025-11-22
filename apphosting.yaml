@@ -11,7 +11,6 @@ runConfig:
 env:
   # ----------------------------------------------------
   # Firebase Web (Client) SDK - exposed to browser
-  # These are safe to expose (usually prefixed with NEXT_PUBLIC_)
   # ----------------------------------------------------
   - variable: NEXT_PUBLIC_FIREBASE_API_KEY
     value: AIzaSyCFdDAIC_2APnckuwTMX2boQGlJU5arAGQ
@@ -26,58 +25,71 @@ env:
   - variable: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
     value: "22501273955"
   - variable: NEXT_PUBLIC_FIREBASE_APP_ID
-    # NOTE: I removed the trailing comma from the original value
     value: 1:22501273955:web:cbc4f3f6b60200954e2356
   - variable: NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
     value: G-QYZ76LZMDB
+
+  # Public base URL of your app in production
   - variable: NEXT_PUBLIC_BASE_URL
     value: https://skillhubnepal.com.np
+    # or: https://plexcourses.com if this is PlexCourses
 
   # ----------------------------------------------------
-  # Private Server-Side/Admin Configuration
+  # Private Server-Side/Admin Configuration (Firebase Admin)
   # ----------------------------------------------------
-  # Note on Service Account Key: Storing a complex JSON string with newlines
-  # directly in a YAML file is problematic. It's safer to use a Secret Manager 
-  # reference or pass the key as a base64-encoded string, but for direct
-  # config, we'll use the discrete vars fallback.
-  
   - variable: FIREBASE_PROJECT_ID
     value: saugat-whatsapp-clone
   - variable: FIREBASE_CLIENT_EMAIL
-    # NOTE: I removed the trailing comma from the original value
     value: firebase-adminsdk-fbsvc@saugat-whatsapp-clone.iam.gserviceaccount.com
   - variable: FIREBASE_PRIVATE_KEY
-    # The private key must be a single, continuous string. The YAML parser 
-    # handles multi-line strings, but it's cleaner to remove the \n and use 
-    # it as is if possible, or use a Secret. Given your source, I'll pass 
-    # the raw string as you defined it.
     value: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDNJYn6gQSYxuWJ\n+gbLmHfSaV/m9183ymzdx2UF6rOt8Lp3bbP4s20rIajuIO5Elkf7/4xg6s/1ek2M\nKYBtb+f2huKrvu9vx3fpEigg6q1+D8fRB+fpbiPSK5kT22PFuU5XTU/HP/KCBbcj\nO0j9ddKhAyqt270il94jHMVw9aZdMZ6zdK2s7XKX+jkOX3tZQwLMLugKm7QxxE+/\n0YPPmSh3p5dSZ93fJ9juUKZ3r0qGcJ//KV09q6MIOaReQMLmgocaBLuyCpsuQ3mu\nW77nS9E2sozdUM94vQpoOIaKDiofXr4qDCCcpas+z4U2nxKBfeVQ4aPtUHxpvsg8\nt49O3RQzAgMBAAECggEAQ9kVgEcpaQnnIrIRi0Z64pk9QZsw37fQN61ZqRJNqMqE\nMTmUGz3kbi5su40ioIZ/ekWzfN5MNyji+udC9W7cbfmAgELe175F10zM/s3+4UGA\n2Y5e0iI+MKWAtEOMBPnbgh4ss35fy0buofVal5FfPydX9zZEoGtP6Zb7afektQ87\nfN6VAKxOPulyBtU0qXofbqMlk5R40YLoXeGUDNODczJEtYYwLlXkTCSXnGBG53Kz\npvx21tBs283IP3btV75IqGgHIf7YQh9/2xXA6kk8TZXAnoltbq2gQmBMIDbIUVNN\nymB/a4qTO0E0gH3iiA6y4b+9ypPwbNXl8qOHTWQxGQKBgQDs78RizfDqWtKCLFwX\nuTb+h5XirOD+SDMfqJnvC/LrNPlsggmSqvXGOpjhj3om9GhSkBEY4xaJBp3x36t5\nigpTXqfsD/Vj8O3Cj1G8s6R+9H5nLsUwZH35aTasWN5eQVvUdqx+x3b4dK+CDffX\nvgQTS2bFj9BrdeCbG76LXdMhbwKBgQDdpvzK9ORVLZSNUTWmd2uRRMSfwrwup6Fk\nzhK+cJ/Sn7GtGg6xMjXkbT5tb7Pv1JRRnmJPrVmFDpq3YZjnKG91ErggSgJ7FNmh\ngCD7DkU/usGdc8Ae9zPq7gREgd4ePBncKEwokgOjhSgI5wcTAkuFyfg18Fj+9J61\nFsAurJPPfQKBgQCNDDcWso5mlOaYQ5wXK1VHtKNPq6bM+WIlyJLKsYxM5N5O8CKO\nw2NIPH3iWS1Yn0qzS7xB2n4B2ISSBprn4XtAIitI5j8o3bZMilEYSsD0KsxM1JTi\nuBAeN7oqY0UNS09FbdhGKKv0QFJy06nlLuLyMYLevTxPnH63F48ZHCOh1QKBgCjx\nkbzD4/HAC7LXD3wCj0I0W8XPKQfNO0jtsBSxpTQ4/48kQxaEWeQqMd/xRGHG+Obi\nxPJG6URk4DuDscTxeTU9EfoU8cReo5zrmCwIBM6y5tT47sJJk7OP6AXnn2oiW/yJ\nDRhpcHaiQDT0yB/AysaZ+lmsXiQqd66n1zRH+L3ZAoGBAJlb7dxhAbm886awtK6S\nDIZNbBLKtWkJKXXiEqqLe+Y57LMJ3rLlq13kO1MPkzjvRdTcBB+DHD5qDNBUYgDC\n6j3PFAvlItBoA0EyI07v1PUIMlxDRNebV9JDxr+LhrT4XL1GZSbLGM7Z7A3nHIET\nUSt5/S1GA4r/I3cbfIzkEB7y\n-----END PRIVATE KEY-----"
   - variable: FIREBASE_DATABASE_URL
     value: https://saugat-whatsapp-clone-default-rtdb.firebaseio.com
+
+  # YouTube API (server-side)
   - variable: YOUTUBE_API_KEY
     value: AIzaSyDWvDAOT7IhjzPkaS0oyME3z6dX2po7Geg
 
   # ----------------------------------------------------
-  # Email Transport Variables (SMTP/Gmail)
+  # Email Transport via Cloudflare Worker (MailChannels)
   # ----------------------------------------------------
-  - variable: GMAIL_EMAIL
-    value: appplex100@gmail.com
-  - variable: OAUTH_CLIENT_ID
-    value: 517516166135-9p24t78ejm75fgjq45hkt3a3dmp7qn13.apps.googleusercontent.com
-  - variable: OAUTH_CLIENT_SECRET
-    value: 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
-  - variable: OAUTH_REFRESH_TOKEN
-    value: 1//04BzcReY7WvKGCgYIARAAGAQSNgF-L9Irb7Htk-JF_wk_85X_OTEySBvUpXkzU5g2ov1tcbRNMro6z3Np0EBytk9unXQuQ94hmA
+  # Use Cloudflare Worker instead of sendmail/Gmail
   - variable: MAIL_TRANSPORT
-    value: sendmail
-  - variable: MAIL_FROM
-    value: "Plex Courses <no-reply@PlexCourses.com.np>"
-  - variable: SENDMAIL_PATH
-    value: /usr/sbin/sendmail
+    value: cloudflare-worker
+
+  # URL of your Cloudflare mail Worker
+  # e.g. https://plexcourses-mailer.<your-account>.workers.dev
+  - variable: CLOUDFLARE_WORKER_URL
+    value: https://plexcourses-mailer.YOUR_ACCOUNT.workers.dev
+
+  # Must match the INTERNAL_KEY secret set in the Worker
+  - variable: CLOUDFLARE_WORKER_SECRET
+    value: YOUR_INTERNAL_KEY_VALUE
+
+  # From address used in outgoing emails
+  - variable: MAIL_FROM_EMAIL
+    value: no-reply@plexcourses.com
+  - variable: MAIL_FROM_NAME
+    value: Plex Courses
+
+  # (optional) reply-to if you want
+  # - variable: MAIL_REPLY_TO
+  #   value: support@plexcourses.com
 
   # ----------------------------------------------------
-  # NOTE: The FIREBASE_SERVICE_ACCOUNT_KEY JSON block 
-  # is excluded. It's generally best practice to use the 
-  # discrete variables (PROJECT_ID, CLIENT_EMAIL, PRIVATE_KEY) 
-  # for server-side initialization when deploying to platforms like Cloud Run.
+  # LEGACY GMAIL/SMTP CONFIG (NO LONGER USED)
+  # Kept here commented-out for reference. Do NOT rely on these
+  # in production now that MAIL_TRANSPORT=cloudflare-worker
   # ----------------------------------------------------
+  # - variable: GMAIL_EMAIL
+  #   value: appplex100@gmail.com
+  # - variable: OAUTH_CLIENT_ID
+  #   value: 517516166135-9p24t78ejm75fgjq45hkt3a3dmp7qn13.apps.googleusercontent.com
+  # - variable: OAUTH_CLIENT_SECRET
+  #   value: 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
+  # - variable: OAUTH_REFRESH_TOKEN
+  #   value: 1//04BzcReY7WvKGCgYIARAAGAQSNgF-L9Irb7Htk-JF_wk_85X_OTEySBvUpXkzU5g2ov1tcbRNMro6z3Np0EBytk9unXQuQ94hmA
+  # - variable: SENDMAIL_PATH
+  #   value: /usr/sbin/sendmail
+  # - variable: MAIL_FROM
+  #   value: "Plex Courses <no-reply@PlexCourses.com.np>"
