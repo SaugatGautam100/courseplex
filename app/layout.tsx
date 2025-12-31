@@ -246,6 +246,7 @@ export default function RootLayout({
     <html lang="en" className="overflow-x-hidden scroll-smooth">
       <head>
         {/* All structured data together for Google */}
+        <meta name="google-adsense-account" content="ca-pub-5473443896068638"></meta>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
